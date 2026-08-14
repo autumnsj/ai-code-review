@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ai-code-review/aicr/internal/auth"
 	"github.com/ai-code-review/aicr/internal/domain"
@@ -11,6 +14,81 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// fetchModelsReq 拉取 OpenAI 兼容接口的模型列表。api_key 可选：
+// 前端可传当前行已填未保存的 key；不传则后端会尝试从已保存的 llm 设置里按 base_url 匹配。
+type fetchModelsReq struct {
+	BaseURL string `json:"base_url" binding:"required"`
+	APIKey  string `json:"api_key"`
+}
+
+type modelItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// POST /api/admin/settings/llm/fetch-models
+func (s *Server) fetchModels(c *gin.Context) {
+	var req fetchModelsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	key := strings.TrimSpace(req.APIKey)
+	// 未传 key 时，尝试从已保存配置中匹配同 base_url 的 profile。
+	if key == "" {
+		var saved domain.LLMSettings
+		if err := s.store.GetSetting(c.Request.Context(), "llm", &saved); err == nil {
+			for _, p := range saved.Profiles {
+				if strings.TrimRight(p.BaseURL, "/") == strings.TrimRight(req.BaseURL, "/") && p.APIKey != "" {
+					key = p.APIKey
+					break
+				}
+			}
+		}
+	}
+
+	url := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/") + "/models"
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Base URL 无效: " + err.Error()})
+		return
+	}
+	if key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "无法连接模型服务: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 最多 2MB
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "模型服务返回错误: " + resp.Status})
+		return
+	}
+	var parsed struct {
+		Data []modelItem `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "无法解析模型列表（接口返回非标准格式）"})
+		return
+	}
+	models := make([]modelItem, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID == "" {
+			continue
+		}
+		if m.Name == "" {
+			m.Name = m.ID
+		}
+		models = append(models, m)
+	}
+	c.JSON(http.StatusOK, gin.H{"models": models})
+}
 
 // maskKey 脱敏 API key，保留首 3 尾 4。
 func maskKey(k string) string {

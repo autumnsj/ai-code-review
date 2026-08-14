@@ -20,16 +20,19 @@ type PiAgent interface {
 
 // PiAgentInput 是传给 Pi Agent 的任务输入（序列化为 spec JSON）。
 type PiAgentInput struct {
-	RepoID      int64               `json:"repo_id"`
-	CloneURL    string              `json:"clone_url"`
-	AccessToken string              `json:"access_token,omitempty"`
-	CommitSHA   string              `json:"commit_sha"`
-	BaseSHA     string              `json:"base_sha,omitempty"`
-	TargetRef   string              `json:"target_ref,omitempty"`
-	SourceRef   string              `json:"source_ref,omitempty"`
-	PR          *PRInfo             `json:"pr,omitempty"`
-	Config      *ReviewConfig       `json:"config,omitempty"`
-	LLM         *domain.LLMConfig   `json:"llm,omitempty"`
+	RepoID      int64             `json:"repo_id"`
+	CloneURL    string            `json:"clone_url"`
+	AccessToken string            `json:"access_token,omitempty"`
+	// SSHPrivateKey 是 SSH 凭据的私钥 PEM。不写入 input.json（json:"-"），
+	// 由 CLI 写入仅当前用户可读的临时 key 文件后通过 GIT_SSH_COMMAND 注入给 git。
+	SSHPrivateKey string          `json:"-"`
+	CommitSHA     string          `json:"commit_sha"`
+	BaseSHA       string          `json:"base_sha,omitempty"`
+	TargetRef     string          `json:"target_ref,omitempty"`
+	SourceRef     string          `json:"source_ref,omitempty"`
+	PR            *PRInfo         `json:"pr,omitempty"`
+	Config        *ReviewConfig   `json:"config,omitempty"`
+	LLM           *domain.LLMConfig `json:"llm,omitempty"`
 }
 
 type PRInfo struct {
@@ -168,6 +171,19 @@ func (p *Pipeline) run(ctx context.Context, payload domain.ReviewPayload) (*PiAg
 		TargetRef:   payload.TargetRef,
 		SourceRef:   payload.SourceRef,
 		LLM:         llm,
+	}
+	// 绑定了可复用凭据时，按类型覆盖内联 token 或注入 SSH 私钥。
+	if repo.CredentialID > 0 {
+		cred, err := p.store.GetCredential(ctx, repo.CredentialID)
+		if err != nil {
+			return nil, fmt.Errorf("加载仓库凭据失败: %w", err)
+		}
+		switch cred.Type {
+		case domain.CredentialHTTPSToken:
+			in.AccessToken = cred.Secret
+		case domain.CredentialSSH:
+			in.SSHPrivateKey = cred.Secret
+		}
 	}
 	if payload.PRNumber > 0 {
 		in.PR = &PRInfo{

@@ -1,8 +1,10 @@
 import { Layout, Menu, Button, theme } from 'antd'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import Footer from './Footer'
 import {
   DashboardOutlined,
   BranchesOutlined,
+  KeyOutlined,
   AuditOutlined,
   TeamOutlined,
   UnorderedListOutlined,
@@ -15,6 +17,7 @@ const { Sider, Content, Header } = Layout
 const items = [
   { key: '/admin/dashboard', icon: <DashboardOutlined />, label: <Link to="/admin/dashboard">概览</Link> },
   { key: '/admin/repos', icon: <BranchesOutlined />, label: <Link to="/admin/repos">仓库</Link> },
+  { key: '/admin/credentials', icon: <KeyOutlined />, label: <Link to="/admin/credentials">凭据</Link> },
   { key: '/admin/reviews', icon: <AuditOutlined />, label: <Link to="/admin/reviews">审查记录</Link> },
   { key: '/admin/stats', icon: <TeamOutlined />, label: <Link to="/admin/stats/authors">作者排行</Link> },
   { key: '/admin/jobs', icon: <UnorderedListOutlined />, label: <Link to="/admin/jobs">任务队列</Link> },
@@ -47,6 +50,7 @@ export default function AdminLayout() {
         <Content style={{ margin: 24 }}>
           <Outlet />
         </Content>
+        <Footer />
       </Layout>
     </Layout>
   )

@@ -136,6 +136,7 @@ func (s *Server) Router() *gin.Engine {
 		authed.POST("/change-password", s.changePassword)
 		authed.GET("/settings/llm", s.getLLMSettings)
 		authed.PUT("/settings/llm", s.updateLLMSettings)
+		authed.POST("/settings/llm/fetch-models", s.fetchModels)
 		authed.GET("/settings/server", s.getServerSettings)
 		authed.PUT("/settings/server", s.updateServerSettings)
 		authed.GET("/settings/notifications", s.getNotifiers)
@@ -148,6 +149,11 @@ func (s *Server) Router() *gin.Engine {
 		authed.DELETE("/repos/:id", s.deleteRepo)
 		authed.POST("/repos/:id/reset-token", s.resetRepoToken)
 		authed.POST("/repos/:id/trigger", s.triggerRepoReview)
+
+		authed.GET("/credentials", s.listCredentials)
+		authed.POST("/credentials", s.createCredential)
+		authed.PATCH("/credentials/:id", s.updateCredential)
+		authed.DELETE("/credentials/:id", s.deleteCredential)
 
 		authed.GET("/reviews", s.listReviews)
 		authed.GET("/reviews/:id", s.getReview)

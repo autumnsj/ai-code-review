@@ -1,7 +1,8 @@
-import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm } from 'antd'
-import { useEffect } from 'react'
+import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm, AutoComplete, Tooltip } from 'antd'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput } from '../../api/settings'
+import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem } from '../../api/settings'
+import { ReloadOutlined } from '@ant-design/icons'
 
 export default function SettingsPage() {
   return (
@@ -20,6 +21,56 @@ export default function SettingsPage() {
 }
 
 type LLMFormRow = LLMProfileInput & { api_key_set?: boolean }
+
+// ModelField 单个模型条目：可手填，也可点「拉取」从 provider 的 /models 选择。
+function ModelField({ name }: { name: number }) {
+  const { message } = App.useApp()
+  const form = Form.useFormInstance()
+  const [options, setOptions] = useState<ModelItem[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const fetchModels = async () => {
+    const baseUrl = form.getFieldValue(['profiles', name, 'base_url'])
+    if (!baseUrl) {
+      message.warning('请先填写 Base URL')
+      return
+    }
+    const apiKey = form.getFieldValue(['profiles', name, 'api_key']) || ''
+    setLoading(true)
+    try {
+      const models = await settingsApi.fetchModels(baseUrl, apiKey)
+      setOptions(models)
+      if (models.length === 0) message.info('未获取到模型，仍可手动输入')
+      else message.success(`获取到 ${models.length} 个模型`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '拉取模型失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Form.Item label="模型" required>
+      <Space.Compact style={{ width: '100%' }}>
+        <Form.Item
+          name={[name, 'model']}
+          noStyle
+          rules={[{ required: true, message: '请选择或输入模型' }]}
+        >
+          <AutoComplete
+            placeholder="deepseek-chat / gpt-4o / qwen-plus ..."
+            options={options.map(m => ({ value: m.id, label: m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id }))}
+            filterOption={(input, opt) => String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            allowClear
+          />
+        </Form.Item>
+        <Tooltip title="从模型服务拉取可用模型列表">
+          <Button icon={<ReloadOutlined spin={loading} />} loading={loading} onClick={fetchModels}>拉取模型</Button>
+        </Tooltip>
+      </Space.Compact>
+    </Form.Item>
+  )
+}
 
 function LLMPane() {
   const qc = useQueryClient()
@@ -115,9 +166,7 @@ function LLMPane() {
                   <Form.Item label="Base URL" name={[name, 'base_url']} rules={[{ required: true }]}>
                     <Input placeholder="https://api.openai.com/v1" />
                   </Form.Item>
-                  <Form.Item label="模型" name={[name, 'model']} rules={[{ required: true }]}>
-                    <Input placeholder="deepseek-chat / gpt-4o / qwen-plus ..." />
-                  </Form.Item>
+                  <ModelField name={name} />
                   <Form.Item noStyle shouldUpdate={(p, c) =>
                     p.profiles?.[name]?.api_key_set !== c.profiles?.[name]?.api_key_set
                   }>

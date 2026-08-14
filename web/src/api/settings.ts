@@ -53,9 +53,16 @@ export interface NotifierChannelInput {
   enabled: boolean
 }
 
+export interface ModelItem {
+  id: string
+  name?: string
+}
+
 export const settingsApi = {
   getLLM: () => http.get<LLMSettings>('/api/admin/settings/llm').then(r => r.data),
   updateLLM: (v: LLMUpdate) => http.put('/api/admin/settings/llm', v).then(r => r.data),
+  fetchModels: (base_url: string, api_key?: string) =>
+    http.post<{ models: ModelItem[] }>('/api/admin/settings/llm/fetch-models', { base_url, api_key }).then(r => r.data.models),
   getServer: () => http.get<{ base_url: string }>('/api/admin/settings/server').then(r => r.data),
   updateServer: (v: { base_url: string }) => http.put('/api/admin/settings/server', v).then(r => r.data),
   changePassword: (v: { old_password: string; new_password: string }) =>

@@ -27,6 +27,20 @@ func NewCLI(bin, dataDir string, log *zap.Logger) *CLI {
 	return &CLI{bin: bin, dataDir: dataDir, log: log}
 }
 
+// writeSSHKey 将 SSH 私钥写入 dataDir/keys/<repoID>（0600），返回路径供 GIT_SSH_COMMAND 使用。
+// 文件持久保留（跨审查复用，且不在随 workdir 清理时删除）。同一仓库的凭据更新会覆盖该文件。
+func (c *CLI) writeSSHKey(repoID int64, pem string) (string, error) {
+	dir := filepath.Join(c.dataDir, "keys")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("mkdir keys: %w", err)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("repo-%d", repoID))
+	if err := os.WriteFile(path, []byte(pem), 0o600); err != nil {
+		return "", fmt.Errorf("write ssh key: %w", err)
+	}
+	return path, nil
+}
+
 func (c *CLI) Run(ctx context.Context, in PiAgentInput) (*PiAgentReport, error) {
 	workDir := filepath.Join(c.dataDir, "work", fmt.Sprintf("review-%d-%d", in.RepoID, time.Now().UnixNano()))
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
@@ -54,13 +68,24 @@ func (c *CLI) Run(ctx context.Context, in PiAgentInput) (*PiAgentReport, error) 
 		"--output", outputPath,
 		"--workdir", workDir,
 	)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		// 禁止执行仓库内 git hooks
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=core.hooksPath",
 		"GIT_CONFIG_VALUE_0=/dev/null",
 	)
+	// SSH 凭据：把私钥写入持久目录（不随每次 workdir 删除），通过 GIT_SSH_COMMAND 注入。
+	// 注意：仅当 clone_url 为 SSH 形式（git@host:org/repo.git）时 ssh 才会被使用。
+	if in.SSHPrivateKey != "" {
+		keyPath, err := c.writeSSHKey(in.RepoID, in.SSHPrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, "GIT_SSH_COMMAND=ssh -i "+keyPath+
+			" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes")
+	}
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

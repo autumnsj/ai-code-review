@@ -6,6 +6,7 @@ import SetupPage from './pages/setup'
 import DashboardPage from './pages/dashboard'
 import ReposPage from './pages/repos'
 import RepoDetailPage from './pages/repos/detail'
+import CredentialsPage from './pages/credentials'
 import ReviewsPage from './pages/reviews'
 import ReviewDetailPage from './pages/reviews/detail'
 import JobsPage from './pages/jobs'
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'repos', element: <ReposPage /> },
       { path: 'repos/:id', element: <RepoDetailPage /> },
+      { path: 'credentials', element: <CredentialsPage /> },
       { path: 'reviews', element: <ReviewsPage /> },
       { path: 'reviews/:id', element: <ReviewDetailPage /> },
       { path: 'stats/authors', element: <AuthorsStatsPage /> },

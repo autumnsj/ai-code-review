@@ -21,12 +21,31 @@ type Repo struct {
 	WebURL        string    `json:"web_url"`
 	Name          string    `json:"name"`
 	DefaultBranch string    `json:"default_branch"`
-	AccessToken   string    `json:"access_token,omitempty"` // 私有仓库 clone 凭证，不对外返回
-	HookToken     string    `json:"hook_token,omitempty"`   // hookUrl 路径段，创建/重置时返回
-	HookSecret    string    `json:"hook_secret,omitempty"`  // 平台签名校验 secret，可选
-	Status        string    `json:"status"`                 // active | disabled
+	AccessToken   string    `json:"access_token,omitempty"`  // 私有仓库 clone 凭证，不对外返回
+	CredentialID  int64     `json:"credential_id,omitempty"` // 绑定的可复用凭据（credentials.id），0 表示未绑定
+	HookToken     string    `json:"hook_token,omitempty"`    // hookUrl 路径段，创建/重置时返回
+	HookSecret    string    `json:"hook_secret,omitempty"`   // 平台签名校验 secret，可选
+	Status        string    `json:"status"`                  // active | disabled
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Credential 类型。
+const (
+	CredentialSSH        = "ssh"
+	CredentialHTTPSToken = "https_token"
+)
+
+// Credential 是可跨仓库复用的 clone 凭据（SSH 密钥对或 HTTPS Token）。
+type Credential struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"` // ssh | https_token
+	Secret      string    `json:"-"`    // SSH 私钥 PEM / HTTPS Token，永不通过 API 返回
+	PublicKey   string    `json:"public_key,omitempty"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Review 一次代码审查记录。

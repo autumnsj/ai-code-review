@@ -1,0 +1,176 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/ai-code-review/aicr/internal/domain"
+	"github.com/ai-code-review/aicr/internal/store"
+)
+
+type createRepoReq struct {
+	Provider      string `json:"provider"`
+	CloneURL      string `json:"clone_url" binding:"required"`
+	WebURL        string `json:"web_url"`
+	Name          string `json:"name" binding:"required"`
+	DefaultBranch string `json:"default_branch"`
+	AccessToken   string `json:"access_token"`
+	HookSecret    string `json:"hook_secret"`
+}
+
+type repoResp struct {
+	ID            int64  `json:"id"`
+	Provider      string `json:"provider"`
+	CloneURL      string `json:"clone_url"`
+	WebURL        string `json:"web_url"`
+	Name          string `json:"name"`
+	DefaultBranch string `json:"default_branch"`
+	HookURL       string `json:"hook_url"`
+	HasSecret     bool   `json:"has_secret"`
+	Status        string `json:"status"`
+}
+
+func (s *Server) toRepoResp(r *domain.Repo) repoResp {
+	return repoResp{
+		ID:            r.ID,
+		Provider:      string(r.Provider),
+		CloneURL:      maskCloneURL(r.CloneURL),
+		WebURL:        r.WebURL,
+		Name:          r.Name,
+		DefaultBranch: r.DefaultBranch,
+		HookURL:       s.baseURL + "/hooks/" + r.HookToken,
+		HasSecret:     r.HookSecret != "",
+		Status:        r.Status,
+	}
+}
+
+// toRepoRespWithToken 创建/重置时返回明文 hookToken（仅此一次）。
+func (s *Server) toRepoRespWithToken(r *domain.Repo) repoResp {
+	resp := s.toRepoResp(r)
+	resp.HookURL = s.baseURL + "/hooks/" + r.HookToken
+	return resp
+}
+
+func maskCloneURL(u string) string {
+	// 简单隐藏 clone url 里的凭证
+	if idx := IndexByte(u, '@'); idx > 0 {
+		if scheme := IndexByte(u, ':'); scheme > 0 && scheme < idx {
+			return u[:scheme+3] + "****" + u[idx:]
+		}
+	}
+	return u
+}
+
+// IndexByte 避免引入 strings 只为一处使用，保持可读性。
+func IndexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// GET /api/admin/repos
+func (s *Server) listRepos(c *gin.Context) {
+	repos, err := s.store.ListRepos(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	out := make([]repoResp, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, s.toRepoResp(r))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+// POST /api/admin/repos
+func (s *Server) createRepo(c *gin.Context) {
+	var req createRepoReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	prov := domain.Provider(req.Provider)
+	if prov == "" {
+		prov = domain.ProviderGitHub
+	}
+	r, err := s.store.CreateRepo(c.Request.Context(), store.CreateRepoInput{
+		Provider:      prov,
+		CloneURL:      req.CloneURL,
+		WebURL:        req.WebURL,
+		Name:          req.Name,
+		DefaultBranch: req.DefaultBranch,
+		AccessToken:   req.AccessToken,
+		HookSecret:    req.HookSecret,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, s.toRepoRespWithToken(r))
+}
+
+// GET /api/admin/repos/:id
+func (s *Server) getRepo(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	r, err := s.store.GetRepoByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, s.toRepoResp(r))
+}
+
+type updateRepoReq struct {
+	Name          *string `json:"name"`
+	DefaultBranch *string `json:"default_branch"`
+	AccessToken   *string `json:"access_token"`
+	HookSecret    *string `json:"hook_secret"`
+	Status        *string `json:"status"`
+}
+
+// PATCH /api/admin/repos/:id
+func (s *Server) updateRepo(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var req updateRepoReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.store.UpdateRepo(c.Request.Context(), id, req.Name, req.DefaultBranch, req.AccessToken, req.HookSecret, req.Status); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r, _ := s.store.GetRepoByID(c.Request.Context(), id)
+	c.JSON(http.StatusOK, s.toRepoResp(r))
+}
+
+// POST /api/admin/repos/:id/reset-token
+func (s *Server) resetRepoToken(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	tok, err := s.store.ResetHookToken(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"hook_token": tok, "hook_url": s.baseURL + "/hooks/" + tok})
+}
+
+// DELETE /api/admin/repos/:id
+func (s *Server) deleteRepo(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err := s.store.DeleteRepo(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}

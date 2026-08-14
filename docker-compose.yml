@@ -1,0 +1,56 @@
+services:
+  aicr:
+    build: .
+    image: ai-code-review:latest
+    container_name: ai-code-review
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - AICR_PORT=8080
+      - AICR_DATA_DIR=/data
+      # 留空：首次访问 http://localhost:8080 进入 Web 初始化向导，在页面里选 SQLite/PostgreSQL。
+      # 想无头直接启动（跳过向导），取消注释下两行；postgres 示例见同文件 postgres service。
+      - AICR_DB_DRIVER=${AICR_DB_DRIVER:-}
+      - AICR_DB_DSN=${AICR_DB_DSN:-}
+      - AICR_ADMIN_PASSWORD=${AICR_ADMIN_PASSWORD:-admin123}
+      - AICR_BASE_URL=${AICR_BASE_URL:-http://localhost:8080}
+      - AICR_JWT_SECRET=${AICR_JWT_SECRET:-}
+      - AICR_WORKER_CONCURRENCY=2
+      - AICR_LOG_LEVEL=${AICR_LOG_LEVEL:-info}
+      - AICR_PI_AGENT_BIN=${AICR_PI_AGENT_BIN:-pi-agent}
+    volumes:
+      - aicr-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # 只读根文件系统：仅 /data（命名卷）和 /tmp 可写
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    # 用 PostgreSQL 时取消注释下面两行（依赖下方 postgres service）
+    # depends_on:
+    #   - postgres
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/public/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 可选：外置 PostgreSQL。启用后设置
+  #   AICR_DB_DRIVER=postgres
+  #   AICR_DB_DSN=postgres://aicr:aicrpass@postgres:5432/aicr?sslmode=disable
+  # postgres:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: aicr
+  #     POSTGRES_PASSWORD: aicrpass
+  #     POSTGRES_DB: aicr
+  #   volumes:
+  #     - aicr-pg:/var/lib/postgresql/data
+
+volumes:
+  aicr-data:
+  # aicr-pg:

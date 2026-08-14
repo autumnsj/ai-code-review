@@ -1,0 +1,26 @@
+# Binaries
+/aicr
+/out/
+
+# Go
+*.test
+*.out
+
+# Frontend
+web/node_modules/
+web/dist/
+# keep the embed placeholder
+!web/dist/.gitkeep
+
+# Local data / env
+/data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+
+# Editor
+.idea/
+.vscode/
+.DS_Store

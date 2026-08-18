@@ -67,14 +67,19 @@ log "上传构建上下文到 $DEPLOY_HOST:$DEPLOY_DIR ..."
 ssh "$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR/deploy'"
 
 upload() {
-  # $1 = 本地路径, $2 = 远程相对路径
-  if command -v rsync >/dev/null 2>&1 && ssh "$DEPLOY_HOST" 'command -v rsync >/dev/null 2>&1'; then
-    rsync -az --delete -e ssh "$1" "$DEPLOY_HOST:$DEPLOY_DIR/$2"
+  # $1 = 本地路径, $2 = 远程相对路径。
+  # 目录必须把「内容」同步到目标目录本身，而不是把目录嵌套进去：
+  # rsync 源/目标都带尾斜杠表示同步内容；scp 先清空目标再整体复制。
+  if [ -d "$1" ]; then
+    if command -v rsync >/dev/null 2>&1 && ssh "$DEPLOY_HOST" 'command -v rsync >/dev/null 2>&1'; then
+      rsync -az --delete -e ssh "${1%/}/" "$DEPLOY_HOST:$DEPLOY_DIR/${2%/}/"
+    else
+      ssh "$DEPLOY_HOST" "rm -rf '$DEPLOY_DIR/$2' && mkdir -p '$DEPLOY_DIR/$2'"
+      scp -r "$1/." "$DEPLOY_HOST:$DEPLOY_DIR/$2/"
+    fi
   else
-    # 回退：scp。目录用 scp -r。
-    if [ -d "$1" ]; then
-      ssh "$DEPLOY_HOST" "rm -rf '$DEPLOY_DIR/$2'"
-      scp -r "$1" "$DEPLOY_HOST:$DEPLOY_DIR/$2"
+    if command -v rsync >/dev/null 2>&1 && ssh "$DEPLOY_HOST" 'command -v rsync >/dev/null 2>&1'; then
+      rsync -az -e ssh "$1" "$DEPLOY_HOST:$DEPLOY_DIR/$2"
     else
       scp "$1" "$DEPLOY_HOST:$DEPLOY_DIR/$2"
     fi

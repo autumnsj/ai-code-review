@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -38,6 +38,10 @@ export default function PublicAuthorReportPage() {
 
   const report = data?.report
   const findings = data?.findings || []
+  const stats = useMemo(() => {
+    if (!report?.stats) return null
+    try { return JSON.parse(report.stats) } catch { return null }
+  }, [report?.stats])
 
   if (isLoading) return <Center><Spin size="large" tip="加载报告中..." /></Center>
   if (error || !report) return <Center><Empty description="报告不存在或已被删除" /></Center>
@@ -72,12 +76,27 @@ export default function PublicAuthorReportPage() {
               <Descriptions.Item label="提交者">{display}</Descriptions.Item>
               <Descriptions.Item label="分支">{report.target_ref || '-'}</Descriptions.Item>
               <Descriptions.Item label="Commit 区间">
-                {report.base_sha
-                  ? <Text code>{report.base_sha.slice(0, 8)}..{report.commit_sha?.slice(0, 8)}</Text>
-                  : <Text code>{report.commit_sha?.slice(0, 12)}</Text>}
+                {(() => {
+                  const actualBase = stats?.range_narrowed && stats?.range_base ? stats.range_base : report.base_sha
+                  return actualBase
+                    ? <Text code>{actualBase.slice(0, 8)}..{report.commit_sha?.slice(0, 8)}</Text>
+                    : <Text code>{report.commit_sha?.slice(0, 12)}</Text>
+                })()}
+                {stats?.range_narrowed && (
+                  <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>
+                    已收窄到最近 {stats.window_days || 5} 天
+                  </Typography.Text>
+                )}
               </Descriptions.Item>
+              {stats?.range_start_at && stats?.range_end_at && (
+                <Descriptions.Item label="提交时间">
+                  {dayjs(stats.range_start_at).format('YYYY-MM-DD HH:mm')} ~ {dayjs(stats.range_end_at).format('YYYY-MM-DD HH:mm')}
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="变更">
                 {report.files_changed} 文件 / +{report.additions} -{report.deletions}
+                {stats?.files_limited ? <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>（文件较多，仅审最近改动的 {stats.reviewed_files ?? '-'} 个）</Typography.Text> : null}
+                {stats?.timed_out ? <Typography.Text type="danger" style={{ marginLeft: 8, fontSize: 12 }}>（达超时上限，按已分析内容出报告）</Typography.Text> : null}
               </Descriptions.Item>
               <Descriptions.Item label="你的问题">
                 {report.findings_count}（critical {report.critical_count} / high {report.high_count} / medium {report.medium_count}）

@@ -151,6 +151,8 @@ func (s *Server) Router() *gin.Engine {
 		authed.PUT("/settings/notifications", s.updateNotifiers)
 		authed.GET("/settings/dimensions", s.getDimensions)
 		authed.PUT("/settings/dimensions", s.updateDimensions)
+		authed.GET("/settings/review-limits", s.getReviewLimits)
+		authed.PUT("/settings/review-limits", s.updateReviewLimits)
 
 		authed.GET("/repos", s.listRepos)
 		authed.POST("/repos", s.createRepo)

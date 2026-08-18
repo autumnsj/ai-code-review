@@ -82,17 +82,31 @@ export default function ReviewDetailPage() {
                 <Descriptions.Item label="仓库">{review.repo_name}</Descriptions.Item>
                 <Descriptions.Item label="分支">{review.target_ref || '-'}</Descriptions.Item>
                 <Descriptions.Item label="Commit 区间">
-                  {review.base_sha
-                    ? <Text code>{review.base_sha.slice(0, 8)}..{review.commit_sha.slice(0, 8)}</Text>
-                    : <Text code>{review.commit_sha.slice(0, 12)}</Text>}
-                  {review.base_sha && (
-                    <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                      head {review.commit_sha.slice(0, 8)} / base {review.base_sha.slice(0, 8)}
+                  {(() => {
+                    const actualBase = stats?.range_narrowed && stats?.range_base ? stats.range_base : review.base_sha
+                    return actualBase
+                      ? <Text code>{actualBase.slice(0, 8)}..{review.commit_sha.slice(0, 8)}</Text>
+                      : <Text code>{review.commit_sha.slice(0, 12)}</Text>
+                  })()}
+                  {stats?.range_narrowed && (
+                    <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>
+                      已收窄到最近 {stats.window_days || 5} 天
                     </Typography.Text>
                   )}
                 </Descriptions.Item>
                 <Descriptions.Item label="作者">{review.author || '-'}</Descriptions.Item>
-                {stats && <Descriptions.Item label="变更">{stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}</Descriptions.Item>}
+                {stats?.range_start_at && stats?.range_end_at && (
+                  <Descriptions.Item label="提交时间">
+                    {dayjs(stats.range_start_at).format('YYYY-MM-DD HH:mm')} ~ {dayjs(stats.range_end_at).format('YYYY-MM-DD HH:mm')}
+                  </Descriptions.Item>
+                )}
+                {stats && (
+                  <Descriptions.Item label="变更">
+                    {stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}
+                    {stats.files_limited ? <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>（文件较多，仅审最近改动的 {stats.reviewed_files ?? '-'} 个）</Typography.Text> : null}
+                    {stats.timed_out ? <Typography.Text type="danger" style={{ marginLeft: 8, fontSize: 12 }}>（达超时上限，按已分析内容出报告）</Typography.Text> : null}
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="触发时间">{dayjs(review.triggered_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
                 <Descriptions.Item label="完成时间">
                   {review.finished_at ? dayjs(review.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}

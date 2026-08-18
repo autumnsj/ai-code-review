@@ -416,3 +416,37 @@ func (s *Server) updateDimensions(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "dimensions": req.Dimensions})
 }
+
+// GET /api/admin/settings/review-limits
+func (s *Server) getReviewLimits(c *gin.Context) {
+	var limits domain.ReviewLimits
+	if err := s.store.GetSetting(c.Request.Context(), "review_limits", &limits); err != nil && !store.IsSettingNotFound(err) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取失败"})
+		return
+	}
+	limits = limits.Normalize()
+	c.JSON(http.StatusOK, gin.H{"limits": limits})
+}
+
+// PUT /api/admin/settings/review-limits
+func (s *Server) updateReviewLimits(c *gin.Context) {
+	var req struct {
+		WindowDays int `json:"window_days"`
+		MaxFiles   int `json:"max_files"`
+		TimeoutSec int `json:"timeout_sec"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	limits := domain.ReviewLimits{
+		WindowDays: req.WindowDays,
+		MaxFiles:   req.MaxFiles,
+		TimeoutSec: req.TimeoutSec,
+	}.Normalize()
+	if err := s.store.SetSetting(c.Request.Context(), "review_limits", limits); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "limits": limits})
+}

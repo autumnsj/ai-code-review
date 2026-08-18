@@ -71,7 +71,19 @@ export default function PublicReportPage() {
               </Descriptions.Item>
               <Descriptions.Item label="作者">{review.author || '-'}</Descriptions.Item>
               {review.pr_title && <Descriptions.Item label="PR">{review.pr_title}</Descriptions.Item>}
-              {stats && <Descriptions.Item label="变更">{stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}</Descriptions.Item>}
+              {stats?.range_start_at && stats?.range_end_at && (
+                <Descriptions.Item label="提交时间">
+                  {dayjs(stats.range_start_at).format('YYYY-MM-DD HH:mm')} ~ {dayjs(stats.range_end_at).format('YYYY-MM-DD HH:mm')}
+                  {stats.range_narrowed ? <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>（已收窄到最近 {stats.window_days || 5} 天）</Typography.Text> : null}
+                </Descriptions.Item>
+              )}
+              {stats && (
+                <Descriptions.Item label="变更">
+                  {stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}
+                  {stats.files_limited ? <Typography.Text type="warning" style={{ marginLeft: 8, fontSize: 12 }}>（文件较多，仅审最近改动的 {stats.reviewed_files ?? '-'} 个）</Typography.Text> : null}
+                  {stats.timed_out ? <Typography.Text type="danger" style={{ marginLeft: 8, fontSize: 12 }}>（达超时上限，按已分析内容出报告）</Typography.Text> : null}
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="触发时间">{dayjs(review.triggered_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
               {review.started_at && (
                 <Descriptions.Item label="开始时间">{dayjs(review.started_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>

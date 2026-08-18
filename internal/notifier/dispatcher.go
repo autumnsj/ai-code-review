@@ -98,7 +98,7 @@ func (d *Dispatcher) NotifyAuthorReview(ctx context.Context, r *domain.Review) {
 		}
 		reportURL := d.baseURL + "/author-reports/" + ar.PublicToken
 		md := BuildAuthorMarkdown(r, ar, findings, reportURL)
-		title := "代码审查报告 - " + r.RepoName + " - " + ar.Author
+		title := "代码审查报告 - " + r.RepoName
 		d.sendToChannels(ctx, enabled, title, md)
 	}
 }

@@ -58,6 +58,8 @@ type ReviewConfig struct {
 	Dimensions   []domain.DimensionSpec `json:"dimensions,omitempty"`
 	IgnorePaths  []string               `json:"ignore_paths,omitempty"`
 	CustomPrompt string                 `json:"custom_prompt,omitempty"`
+	// Limits 是后台可配的审查范围/时长护栏（N 天窗口、文件数上限、墙钟超时）。
+	Limits domain.ReviewLimits `json:"limits"`
 }
 
 // PiAgentReport 是 Pi Agent 输出的标准报告结构（JSON）。
@@ -119,6 +121,19 @@ type ReportStats struct {
 	FilesChanged int `json:"files_changed"`
 	Additions    int `json:"additions"`
 	Deletions    int `json:"deletions"`
+	// 实际审查的提交区间（base 可能被 N 天窗口/文件抽样收窄）。
+	RangeBase     string `json:"range_base,omitempty"`
+	RangeStartAt  string `json:"range_start_at,omitempty"`
+	RangeEndAt    string `json:"range_end_at,omitempty"`
+	WindowDays    int    `json:"window_days,omitempty"`
+	RangeNarrowed bool   `json:"range_narrowed,omitempty"`
+	// 文件数抽样：超过上限时只把最近改动的一批交给 AI。
+	MaxFiles      int  `json:"max_files,omitempty"`
+	FilesLimited  bool `json:"files_limited,omitempty"`
+	ReviewedFiles int  `json:"reviewed_files,omitempty"`
+	OmittedFiles  int  `json:"omitted_files,omitempty"`
+	// 是否因墙钟超时被强制收束。
+	TimedOut bool `json:"timed_out,omitempty"`
 }
 
 // Notifier 审查完成后推送通知。成功时按作者逐条发送（NotifyAuthorReview），
@@ -228,6 +243,13 @@ func (p *Pipeline) run(ctx context.Context, payload domain.ReviewPayload) (*PiAg
 		specs = domain.DefaultDimensions()
 	}
 
+	// 读取审查范围/时长护栏（缺省用内置默认），随 input 传给 Pi Agent。
+	var limits domain.ReviewLimits
+	if err := p.store.GetSetting(ctx, "review_limits", &limits); err != nil && !store.IsSettingNotFound(err) {
+		return nil, nil, fmt.Errorf("load review_limits: %w", err)
+	}
+	limits = limits.Normalize()
+
 	in := PiAgentInput{
 		RepoID:      payload.RepoID,
 		CloneURL:    repo.CloneURL,
@@ -239,6 +261,7 @@ func (p *Pipeline) run(ctx context.Context, payload domain.ReviewPayload) (*PiAg
 		LLM:         llm,
 		Config: &ReviewConfig{
 			Dimensions: specs,
+			Limits:     limits,
 		},
 	}
 	// 绑定了可复用凭据时，按类型覆盖内联 token 或注入 SSH 私钥。

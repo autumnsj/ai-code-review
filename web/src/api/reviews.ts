@@ -90,6 +90,7 @@ export interface AuthorReport {
   files_changed: number
   triggered_at: string
   finished_at?: string
+  stats?: string // 所属 review 的 stats JSON 字符串（提交时间区间/收窄/抽样）
 }
 
 // dimensionRows 从 review 中提取维度评分行：优先用 score_dimensions，

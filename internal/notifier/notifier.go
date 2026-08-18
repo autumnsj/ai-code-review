@@ -132,7 +132,7 @@ func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findin
 	} else if ar.Author != "" {
 		display = ar.Author
 	}
-	md := "## ✅ 代码审查报告（你的提交）\n"
+	md := "## ✅ 代码审查报告\n"
 	md += fmt.Sprintf("**仓库**：[%s](%s)\n", r.RepoName, reportURL)
 	if r.PRTitle != "" {
 		md += fmt.Sprintf("**PR**：%s\n", r.PRTitle)

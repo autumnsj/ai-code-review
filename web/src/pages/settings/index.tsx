@@ -1,7 +1,7 @@
 import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm, AutoComplete, Tooltip } from 'antd'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec } from '../../api/settings'
+import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec, ReviewLimits } from '../../api/settings'
 import { ReloadOutlined } from '@ant-design/icons'
 
 export default function SettingsPage() {
@@ -12,6 +12,7 @@ export default function SettingsPage() {
         items={[
           { key: 'llm', label: 'AI 模型', children: <LLMPane /> },
           { key: 'dimensions', label: '打分维度', children: <DimensionsPane /> },
+          { key: 'review-limits', label: '审查范围', children: <ReviewLimitsPane /> },
           { key: 'notifications', label: '通知', children: <NotificationsPane /> },
           { key: 'server', label: '服务', children: <ServerPane /> },
           { key: 'security', label: '安全', children: <SecurityPane /> },
@@ -394,6 +395,75 @@ function DimensionsPane() {
           )}
         </Form.List>
         <Button type="primary" htmlType="submit" loading={save.isPending} style={{ marginTop: 16 }}>保存</Button>
+      </Form>
+    </Card>
+  )
+}
+
+// 审查护栏默认值，与后端 domain.DefaultReview* 常量一致。
+const DEFAULT_LIMITS: ReviewLimits = { window_days: 5, max_files: 40, timeout_sec: 600 }
+
+function ReviewLimitsPane() {
+  const qc = useQueryClient()
+  const { message } = App.useApp()
+  const [form] = Form.useForm<ReviewLimits>()
+  const { data, isLoading } = useQuery({
+    queryKey: ['settings-review-limits'],
+    queryFn: settingsApi.getReviewLimits,
+  })
+  useEffect(() => {
+    if (data) form.setFieldsValue(data)
+  }, [data, form])
+
+  const save = useMutation({
+    mutationFn: settingsApi.updateReviewLimits,
+    onSuccess: (d) => {
+      message.success('已保存')
+      form.setFieldsValue(d)
+      qc.invalidateQueries({ queryKey: ['settings-review-limits'] })
+    },
+    onError: (e: any) => message.error(e?.response?.data?.error || '保存失败'),
+  })
+
+  return (
+    <Card
+      loading={isLoading}
+      title="审查范围与时长"
+      style={{ maxWidth: 720 }}
+      extra={<Button onClick={() => form.setFieldsValue(DEFAULT_LIMITS)}>恢复默认</Button>}
+    >
+      <Typography.Paragraph type="secondary">
+        控制单次审查的覆盖范围与最长耗时，避免一次提交跨度过大或文件过多导致审查过久。规则已写入 AI 审查技能：超过范围时 AI 只审最近改动的部分，并在报告中注明抽样。
+      </Typography.Paragraph>
+      <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)} initialValues={DEFAULT_LIMITS}>
+        <Form.Item
+          label="提交时间窗口（天）"
+          name="window_days"
+          tooltip="只审查距离最后一次提交（head）最近 N 天内的提交；触发方给的 base 跨越更久时会自动收窄。设为 0 使用默认值 5。"
+          rules={[{ required: true }]}
+        >
+          <InputNumber min={0} max={365} precision={0} style={{ width: 200 }} addonAfter="天" />
+        </Form.Item>
+        <Form.Item
+          label="最多审查文件数"
+          name="max_files"
+          tooltip="窗口内改动文件超过该数量时，只把「最近改动」的一批文件交给 AI 审查，其余在总数中统计但不要求逐一审。"
+          rules={[{ required: true }]}
+        >
+          <InputNumber min={1} max={2000} precision={0} style={{ width: 200 }} addonAfter="个文件" />
+        </Form.Item>
+        <Form.Item
+          label="墙钟超时（秒）"
+          name="timeout_sec"
+          tooltip="从 AI 开始审查到必须出报告的最长墙钟时间；到点强制收束，按已分析内容提交。最小 60 秒。"
+          rules={[{ required: true }]}
+        >
+          <InputNumber min={60} max={3600} precision={0} style={{ width: 200 }} addonAfter="秒" />
+        </Form.Item>
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          当前默认：最近 {DEFAULT_LIMITS.window_days} 天 / 最多 {DEFAULT_LIMITS.max_files} 个文件 / 约 {Math.round(DEFAULT_LIMITS.timeout_sec / 60)} 分钟超时。
+        </Typography.Text>
+        <Button type="primary" htmlType="submit" loading={save.isPending}>保存</Button>
       </Form>
     </Card>
   )

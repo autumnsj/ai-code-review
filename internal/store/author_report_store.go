@@ -39,7 +39,7 @@ const authorReportColumns = `rar.id, rar.review_id, rar.author, rar.author_name,
 	rar.summary, rar.score_total, rar.score_arch, rar.score_quality, rar.score_security, rar.score_maint,
 	rar.score_dimensions, rar.findings_count, rar.critical_count, rar.high_count, rar.medium_count,
 	rar.low_count, rar.info_count, rar.additions, rar.deletions, rar.files_changed,
-	rv.triggered_at, rar.created_at`
+	rv.triggered_at, rar.created_at, rv.stats`
 
 // UpsertAuthorReport 按 (review_id, author) upsert 一条作者报告；存在则更新。
 func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportParams) error {
@@ -174,13 +174,14 @@ func scanAuthorReport(scan func(...any) error) (*domain.ReviewAuthorReport, erro
 	var ar domain.ReviewAuthorReport
 	var dimJSON string
 	var finished sql.NullTime // created_at 用作"完成时间"展示
+	var stats sql.NullString // 所属 review 的 stats JSON（时间区间/收窄/抽样信息）
 	err := scan(
 		&ar.ID, &ar.ReviewID, &ar.Author, &ar.AuthorName, &ar.PublicToken,
 		&ar.RepoName, &ar.CommitSHA, &ar.BaseSHA, &ar.TargetRef,
 		&ar.Summary, &ar.ScoreTotal, &ar.ScoreArch, &ar.ScoreQuality, &ar.ScoreSecurity, &ar.ScoreMaint,
 		&dimJSON, &ar.FindingsCount, &ar.CriticalCount, &ar.HighCount, &ar.MediumCount,
 		&ar.LowCount, &ar.InfoCount, &ar.Additions, &ar.Deletions, &ar.FilesChanged,
-		&ar.TriggeredAt, &finished,
+		&ar.TriggeredAt, &finished, &stats,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan author report: %w", err)
@@ -190,6 +191,9 @@ func scanAuthorReport(scan func(...any) error) (*domain.ReviewAuthorReport, erro
 	}
 	if finished.Valid {
 		ar.FinishedAt = &finished.Time
+	}
+	if stats.Valid {
+		ar.Stats = stats.String
 	}
 	return &ar, nil
 }

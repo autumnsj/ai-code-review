@@ -65,6 +65,12 @@ export interface DimensionSpec {
   weight: number
 }
 
+export interface ReviewLimits {
+  window_days: number
+  max_files: number
+  timeout_sec: number
+}
+
 export const settingsApi = {
   getLLM: () => http.get<LLMSettings>('/api/admin/settings/llm').then(r => r.data),
   updateLLM: (v: LLMUpdate) => http.put('/api/admin/settings/llm', v).then(r => r.data),
@@ -82,4 +88,8 @@ export const settingsApi = {
     http.get<{ dimensions: DimensionSpec[] }>('/api/admin/settings/dimensions').then(r => r.data.dimensions),
   updateDimensions: (dimensions: DimensionSpec[]) =>
     http.put<{ dimensions: DimensionSpec[] }>('/api/admin/settings/dimensions', { dimensions }).then(r => r.data),
+  getReviewLimits: () =>
+    http.get<{ limits: ReviewLimits }>('/api/admin/settings/review-limits').then(r => r.data.limits),
+  updateReviewLimits: (limits: ReviewLimits) =>
+    http.put<{ limits: ReviewLimits }>('/api/admin/settings/review-limits', limits).then(r => r.data.limits),
 }

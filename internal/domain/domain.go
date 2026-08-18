@@ -118,6 +118,9 @@ type ReviewAuthorReport struct {
 	FilesChanged    int                    `json:"files_changed"`
 	TriggeredAt     time.Time              `json:"triggered_at"`
 	FinishedAt      *time.Time             `json:"finished_at,omitempty"`
+	// Stats 是所属 review 的 stats JSON 字符串（提交时间区间、窗口收窄、文件抽样等），
+	// 供个人报告页展示；由 store JOIN reviews.stats 填充，前端自行 JSON.parse。
+	Stats string `json:"stats,omitempty"`
 }
 
 // DimensionScore 单个维度的评分结果（落入 reviews.score_dimensions）。
@@ -288,6 +291,38 @@ type ServerConfig struct {
 	AdminPasswordHash string `json:"admin_password_hash"`
 	JWTSecret         string `json:"jwt_secret"`
 	BaseURL           string `json:"base_url"`
+}
+
+// 审查范围/时长护栏的默认值（settings.review_limits 缺省时使用）。
+const (
+	DefaultReviewWindowDays = 5   // 只审距离 head 最近 N 天的提交
+	DefaultReviewMaxFiles   = 40  // 超过则只把最近改动的一批交给 AI
+	DefaultReviewTimeoutSec = 600 // 墙钟硬超时（秒），约 10 分钟
+)
+
+// ReviewLimits 审查范围与时长护栏（settings.review_limits，后台可配）。
+// 零值会在 Normalize 时填默认值，因此调用方拿到的总是有效配置。
+type ReviewLimits struct {
+	WindowDays int `json:"window_days"`
+	MaxFiles   int `json:"max_files"`
+	TimeoutSec int `json:"timeout_sec"`
+}
+
+// Normalize 把零值/越界值修正为安全默认值，返回归一化后的副本。
+func (l ReviewLimits) Normalize() ReviewLimits {
+	if l.WindowDays <= 0 {
+		l.WindowDays = DefaultReviewWindowDays
+	}
+	if l.MaxFiles < 0 {
+		l.MaxFiles = 0
+	}
+	if l.MaxFiles == 0 {
+		l.MaxFiles = DefaultReviewMaxFiles
+	}
+	if l.TimeoutSec < 60 {
+		l.TimeoutSec = DefaultReviewTimeoutSec
+	}
+	return l
 }
 
 // WebhookEvent 各平台解析后的统一事件。

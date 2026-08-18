@@ -239,6 +239,25 @@ function readCommitAuthor(src, head) {
   }
 }
 
+// ISO 时间格式化为本地展示串（YYYY-MM-DD HH:mm），解析失败原样返回。
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// 读取某 commit 的作者提交时间（ISO 字符串）；失败或空树返回空串。
+function safeIsoTime(src, rev) {
+  if (!rev || rev === "4b825dc642cb6eb9a060e54bf8d69288fbee4904") return "";
+  try {
+    const unix = Number(git(src, ["log", "-1", "--format=%ct", rev]));
+    if (Number.isFinite(unix) && unix > 0) return new Date(unix * 1000).toISOString();
+  } catch { /* ignore */ }
+  return "";
+}
+
 // 把 agent 给出的文件路径归一化为仓库相对路径（去掉 a/ b/ 前缀、开头的 /、反斜杠）。
 function normalizeRepoPath(p) {
   if (!p) return "";
@@ -343,6 +362,24 @@ function isLowValueFile(path) {
 // 适配层绝不把 diff 内容塞进 prompt：只给 base/head 两个提交与「+/- 行数 路径」的
 // 文件清单作为导航，具体改动由 agent 用自己的 bash/read/grep 工具逐文件查看，
 // 避免上万行 diff 一次性灌入上下文导致模型零输出/失败。
+// 解析审查护栏：优先用后台配置（input.config.limits），其次环境变量，最后内置默认。
+// limits 在 Go 侧已 Normalize，这里再兜底一次以兼容直接调用 pi-agent 的场景。
+function resolveLimits(input) {
+  const l = input?.config?.limits || {};
+  const num = (v, fb) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : fb;
+  };
+  return {
+    windowDays: num(l.window_days, num(process.env.AICR_REVIEW_WINDOW_DAYS, 5)),
+    maxFiles: (() => {
+      const n = Number(l.max_files ?? process.env.AICR_REVIEW_MAX_FILES ?? 40);
+      return Number.isFinite(n) && n >= 0 ? n : 40;
+    })(),
+    timeoutSec: Math.max(60, num(l.timeout_sec, num(process.env.AICR_REVIEW_TIMEOUT_SEC, 600))),
+  };
+}
+
 function diffForReview(src, input) {
   const head = input.commit_sha || git(src, ["rev-parse", "HEAD"]);
   let base = input.base_sha || "";
@@ -351,7 +388,53 @@ function diffForReview(src, input) {
     const parents = git(src, ["rev-list", "--parents", "-n", "1", head]).split(/\s+/);
     base = parents.length > 1 ? parents[1] : "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
   }
+
+  // 审查窗口固定为「以 head 为基准的最近 N 天」。触发方给的 base 可能很旧
+  // （例如长时间未 pull 后一次推送，before..after 跨越很多天），此时把 base
+  // 收窄到窗口内最早提交的父提交；窗口内没有更多提交时保持原 base，不扩大范围。
+  const limits = resolveLimits(input);
+  const windowDays = limits.windowDays;
+  let rangeStart = ""; // 实际审查区间的起点提交（用于展示时间区间）
+  let narrowed = false;
+  if (windowDays > 0) {
+    const headUnix = Number(git(src, ["log", "-1", "--format=%ct", head]));
+    if (Number.isFinite(headUnix) && headUnix > 0) {
+      const cutoff = headUnix - windowDays * 24 * 3600;
+      // 一次性取出 base..head 内所有提交及其提交时间（旧→新），在 JS 里按 cutoff 过滤，
+      // 不依赖 git --since 的 approxidate 解析（裸 epoch/相对时间可能被误判）。
+      const lines = git(src, ["log", "--reverse", "--format=%H%x09%ct", `${base}..${head}`])
+        .split("\n").map((s) => s.trim()).filter(Boolean);
+      const commits = lines.map((ln) => {
+        const tab = ln.indexOf("\t");
+        return { sha: ln.slice(0, tab), t: Number(ln.slice(tab + 1)) };
+      }).filter((c) => c.sha && Number.isFinite(c.t));
+      if (commits.length > 0) {
+        const oldest = commits[0];
+        if (oldest.t < cutoff) {
+          // 区间跨越超过 N 天：取窗口内最早提交（>= cutoff），以它的父提交为新 base。
+          const firstInWindow = commits.find((c) => c.t >= cutoff);
+          if (firstInWindow) {
+            // 窗口起点提交的父提交作为新 base（根提交无父，回退到空树）。
+            const parent = git(src, ["log", "-1", "--format=%P", firstInWindow.sha]).split(/\s+/)[0];
+            const newBase = parent || "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+            if (newBase && newBase !== base) {
+              base = newBase;
+              rangeStart = firstInWindow.sha;
+              narrowed = true;
+            }
+          }
+        } else {
+          // 区间本身就在 N 天内，起点就是最早提交（不扩大、不收窄）。
+          rangeStart = oldest.sha;
+        }
+      }
+    }
+  }
+
   const commitAuthor = readCommitAuthor(src, head);
+  // 区间首尾提交时间（用于报告展示「提交时间区间」）。
+  const headTime = safeIsoTime(src, head);
+  const baseTime = rangeStart ? safeIsoTime(src, rangeStart) : "";
   const numstat = git(src, ["diff", "--numstat", base, head]);
   const files = [];
   let filesChanged = 0, additions = 0, deletions = 0;
@@ -366,14 +449,46 @@ function diffForReview(src, input) {
     files.push({ path, add, del, binary: a === "-" });
   }
 
-  // 文件清单（含每个文件 +/-），完整提供，作为 agent 自查时的导航地图；
-  // 这只是路径与行数的元数据，不是代码内容，体积很小。
-  const fileList = files.map((f) => {
+  // 文件数上限：时间窗口内改动文件仍可能很多（例如大功能分支、一次合并）。
+  // 审查过久会拖垮流水线，因此超过上限时只保留「最近改动」的一批文件进入审查清单。
+  // 最近 = 该文件在 base..head 内最后一次被提交的时间（越靠 head 越新），其余文件的
+  // 增删统计仍计入总数，但不要求 AI 逐一审（在 summary 中说明抽样）。
+  const maxFiles = limits.maxFiles;
+  let filesLimited = false;
+  let reviewFiles = files;
+  if (maxFiles > 0 && files.length > maxFiles) {
+    filesLimited = true;
+    for (const f of files) {
+      try {
+        f.lastChanged = Number(git(src, ["log", "-1", "--format=%ct", `${base}..${head}`, "--", f.path])) || 0;
+      } catch {
+        f.lastChanged = 0;
+      }
+    }
+    // 最近修改优先；二进制/锁文件降权（能不占用配额就不占）。
+    files.sort((x, y) => {
+      const lx = x.binary || isLowValueFile(x.path) ? 1 : 0;
+      const ly = y.binary || isLowValueFile(y.path) ? 1 : 0;
+      if (lx !== ly) return lx - ly;
+      return (y.lastChanged || 0) - (x.lastChanged || 0);
+    });
+    reviewFiles = files.slice(0, maxFiles);
+  }
+
+  // 文件清单（含每个文件 +/-），提供给 agent 作为导航地图；
+  // 超过文件数上限时只列出被抽中的最近改动文件，并标注总数，这只是路径与行数元数据。
+  const fmtLine = (f) => {
     const tag = f.binary ? " [binary]" : isLowValueFile(f.path) ? " [generated/lock]" : "";
     return `${f.add.toString().padStart(6)} ${f.del.toString().padStart(6)}  ${f.path}${tag}`;
-  }).join("\n");
+  };
+  const fileList = reviewFiles.map(fmtLine).join("\n");
+  const omittedFiles = Math.max(0, filesChanged - reviewFiles.length);
 
-  return { head, base, filesChanged, additions, deletions, fileList, commitAuthor };
+  return {
+    head, base, filesChanged, additions, deletions, fileList, commitAuthor,
+    windowDays, narrowed, rangeStart, rangeStartAt: baseTime, headAt: headTime,
+    maxFiles, filesLimited, omittedFiles, reviewFileCount: reviewFiles.length,
+  };
 }
 
 // ---------- Pi 模型配置（每个模型 profile 来自平台 input.llm）----------
@@ -418,16 +533,27 @@ async function main() {
   const codegraphReady = prepareCodeGraph(workdir, src);
   process.stderr.write(`[stage] 计算 diff 并读取提交作者…\n`);
   const diff = diffForReview(src, input);
-  // 审查工作量上限：只对比 base..head 这一个提交区间，但文件可能很多，必须限定深入查看的
-  // 文件数与工具调用数，避免 AI 逐个文件无限看下去导致审查过久。
-  // 文件数：最少 5 个，最多 15 个，区间内随总文件数小幅增长（取 log 缩放，避免线性膨胀）。
-  const reviewableFiles = Math.max(0, diff.filesChanged); // 文件清单里含 binary/lock，预算只约束「深入查看」
+  // 审查工作量上限：只对比 base..head 这一个提交区间，但实际交给 AI 的文件数已按
+  // 「最近改动」抽样（diff.filesLimited）。预算基于抽样后的文件数，避免 AI 无限看下去。
+  // 文件数：最少 5 个，最多 15 个，随清单内文件数小幅增长（取 log 缩放，避免线性膨胀）。
+  const reviewableFiles = Math.max(0, diff.reviewFileCount || diff.filesChanged);
   const fileBudget = Math.max(5, Math.min(15,
     5 + Math.round(Math.log2(reviewableFiles + 1) * 1.5)));
   // 工具调用预算：每文件约 4~6 次（diff + read + grep 等），加上少量范围探测。
   const toolBudget = fileBudget * 5 + 6;
   const budget = { files: fileBudget, toolCalls: toolBudget };
-  process.stderr.write(`[stage] 提交区间就绪：${diff.base.slice(0,10)}..${diff.head.slice(0,10)}，${diff.filesChanged} 个文件，+${diff.additions} / -${diff.deletions}；AI 将自行逐文件查看（预算：最多深入 ${budget.files} 个文件、约 ${budget.toolCalls} 次工具调用）…\n`);
+  // 墙钟硬超时（秒）：到点强制收束提交，保证审查在配置的时限内出结果（默认 600s ≈ 10 分钟）。
+  // 与 diffForReview 同源（后台配置优先，环境变量兜底），重复解析开销可忽略。
+  const timeoutSec = resolveLimits(input).timeoutSec;
+  const span = diff.rangeStartAt && diff.headAt
+    ? `（${fmtDate(diff.rangeStartAt)} ~ ${fmtDate(diff.headAt)}）` : "";
+  const winNote = diff.narrowed
+    ? `；原区间超过 ${diff.windowDays} 天，已收窄到最近 ${diff.windowDays} 天`
+    : (diff.windowDays > 0 ? `（窗口 ${diff.windowDays} 天）` : "");
+  const limitNote = diff.filesLimited
+    ? `；${diff.filesChanged} 个文件超过上限 ${diff.maxFiles}，只审最近改动的 ${diff.reviewFileCount} 个`
+    : "";
+  process.stderr.write(`[stage] 提交区间就绪：${diff.base.slice(0,10)}..${diff.head.slice(0,10)}${span}${winNote}，${diff.filesChanged} 个文件，+${diff.additions} / -${diff.deletions}${limitNote}；AI 将自行逐文件查看（预算：最多深入 ${budget.files} 个文件、约 ${budget.toolCalls} 次工具调用、墙钟 ${timeoutSec}s）…\n`);
 
   // 独立的 Pi 配置/会话目录，不污染 /data，也不持久化会话。
   const home = join(workdir, ".pi-home");
@@ -558,10 +684,13 @@ async function main() {
     `## 评分维度（findings.category 必须使用这些 key）`,
     dimText,
     ``,
-    `## 文件改动清单（共 ${diff.filesChanged} 个文件，+${diff.additions} / -${diff.deletions}）`,
+    `## 文件改动清单（共 ${diff.filesChanged} 个文件，+${diff.additions} / -${diff.deletions}${diff.filesLimited ? `，本次只列出最近改动的 ${diff.reviewFileCount} 个，其余 ${diff.omittedFiles} 个不在本次审查范围` : ""}）`,
     "```",
     diff.fileList,
     "```",
+    diff.filesLimited
+      ? `> 文件数超过上限 ${diff.maxFiles}，平台已按「最近改动」抽样，**只审上面列出的文件**，不要去翻清单之外的文件。`
+      : "",
     ``,
     `## 如何查看改动（重要）`,
     `上面只有文件路径和增删行数，**没有把代码内容贴给你**——这是刻意为之：`,
@@ -583,18 +712,18 @@ async function main() {
       : "",
     ``,
     `## 工作量上限（必须遵守，避免审查过久）`,
-    `本次审查你**最多深入查看 ${budget.files} 个源码文件**、**最多发起约 ${budget.toolCalls} 次工具调用**，到上限就必须收束并提交报告。`,
-    `- 文件数很少（≤${budget.files}）时全部覆盖；文件很多时按下面优先级抽样，不要试图看完所有文件。`,
+    `本次审查**墙钟最多约 ${Math.round(timeoutSec / 60)} 分钟**，你**最多深入查看 ${budget.files} 个源码文件**、**最多发起约 ${budget.toolCalls} 次工具调用**。到任一上限就必须立即收束并提交报告——平台会在超时/超调用数时强制中断，届时你只能凭已掌握的信息交卷，所以请提前规划，不要把时间耗在反复读同一处。`,
+    `- 平台已完成时间窗口与文件数的收窄（见上方清单说明），不要自行扩大范围。`,
     `- 先花少量工具调用确定范围（1~2 次 \`git diff --stat\` / 按目录看），再把预算花在最值得看的文件上。`,
     `- 选择文件的优先级：安全/鉴权/加密相关 > 核心业务逻辑与数据处理 > SQL/事务/并发 > 接口契约/配置 > 其它。`,
-    `- 标记 [generated/lock] 的依赖锁、构建产物、压缩文件不计入预算，也不要逐行看，summary 里点一句即可；[binary] 直接跳过。`,
+    `- 标记 [generated/lock] 的依赖锁、构建产物、压缩文件不要逐行看，summary 里点一句即可；[binary] 直接跳过。`,
     `- 没看的文件不要编造问题。findings 必须来自你实际读过的代码，file_path/line 准确。`,
-    `- 即使有文件没看完，只要已覆盖主要风险点，就提交报告并在 summary 里说明审查范围（如"抽样审查了 N/M 个文件"）。`,
+    `- 到达预算/时间上限时，立即调用 submit_report，并在 summary 说明本次抽样/时间窗口覆盖范围（如「窗口内共 X 个文件，审查了最近改动的 Y 个」）。`,
     ``,
     `审查步骤：`,
     `1. \`git diff --stat ${diff.base} ${diff.head}\` 掌握全貌。`,
-    `2. 按优先级挑出最多 ${budget.files} 个文件，逐个 \`git diff ... -- <path>\`，必要时 read 上下文 / grep 调用点。`,
-    `3. 工具调用接近 ${budget.toolCalls} 次或已看够 ${budget.files} 个文件时停止探索，调用 submit_report。`,
+    `2. 按优先级挑出最多 ${budget.files} 个清单内文件，逐个 \`git diff ... -- <path>\`，必要时 read 上下文 / grep 调用点。`,
+    `3. 工具调用接近 ${budget.toolCalls} 次、或感觉时间将尽时停止探索，调用 submit_report。`,
     ``,
     `请按 code-review 技能完成审查，并调用 submit_report 提交报告。`,
   ].filter(Boolean).join("\n");
@@ -607,6 +736,7 @@ async function main() {
   // 工具调用计数：对照 prompt 里给的软预算，超预算时在日志里提示，便于观察审查是否失控。
   let toolCalls = 0;
   let budgetAborted = false;
+  let timeoutAborted = false;
   const hardToolLimit = budget.toolCalls * 2;
   // 把工具调用格式化成简洁一行（如 `read src/a.ts`、`bash git diff --stat`），便于实时查看进度。
   function toolSummary(name, args) {
@@ -741,6 +871,19 @@ async function main() {
     }
   });
 
+  // 墙钟硬超时：到点强制 abort 当前回合，让下面的循环用「超时收束」提示让 AI
+  // 立即凭已掌握内容提交报告。保证整个审查最多约 timeoutSec 秒出结果。
+  let urgentNudge = "";
+  const timeoutHandle = setTimeout(() => {
+    if (submitted) return;
+    timeoutAborted = true;
+    urgentNudge = `审查已达到墙钟时间上限（约 ${Math.round(timeoutSec / 60)} 分钟），必须立即结束。不要做任何新的探索，直接用你已经查看过的代码和信息调用 submit_report 提交报告；没看全的部分不要编造，在 summary 中说明本次因时间限制为抽样/部分审查。`;
+    process.stderr.write(`[warn] 审查达到墙钟超时 ${timeoutSec}s，强制收束并提交报告\n`);
+    session.abort().catch(() => {});
+  }, timeoutSec * 1000);
+  // 提交后立即清掉定时器，避免它在收尾阶段误触发。
+  const clearTimer = () => { if (timeoutHandle) clearTimeout(timeoutHandle); };
+
   // 模型有时在工具探索后结束回合却忘了提交报告；回合结束后若未提交，
   // 强提醒一次再跑一轮，最多两轮，避免偶发的"未提交"失败。
   // 若因触达工具调用硬上限被 abort，直接进入收束提示。
@@ -749,11 +892,12 @@ async function main() {
     "仍未收到 submit_report。请现在就调用它，summary/dimensions/findings 按你已掌握的信息填写（可空数组），这是本次任务的唯一结束方式。",
   ];
   if (budgetAborted) {
-    nudges.unshift("工具调用已达上限，必须停止探索。立即用你已经查看过的文件和信息调用 submit_report 提交报告，不要再调用任何 bash/read/grep/find/ls；没看全的文件不要编造，在 summary 中说明本次为抽样审查。");
+    urgentNudge = "工具调用已达上限，必须停止探索。立即用你已经查看过的文件和信息调用 submit_report 提交报告，不要再调用任何 bash/read/grep/find/ls；没看全的文件不要编造，在 summary 中说明本次为抽样审查。";
   }
   for (let round = 0; round <= nudges.length && !submitted; round++) {
+    const text = round === 0 ? prompt : (urgentNudge || nudges[round - 1]);
     try {
-      await session.prompt(round === 0 ? prompt : nudges[round - 1]);
+      await session.prompt(text);
     } catch (err) {
       // abort 会让 prompt reject；只要已拿到报告就视为正常。
       if (submitted) break;
@@ -766,6 +910,7 @@ async function main() {
       if (round >= nudges.length) throw err;
     }
   }
+  clearTimer();
   session.dispose();
 
   if (!submitted) {
@@ -801,6 +946,19 @@ async function main() {
       files_changed: diff.filesChanged,
       additions: diff.additions,
       deletions: diff.deletions,
+      // 实际审查的提交时间区间（base 可能被 N 天窗口收窄）。
+      range_base: diff.base,
+      range_start_at: diff.rangeStartAt || "",
+      range_end_at: diff.headAt || "",
+      window_days: diff.windowDays,
+      range_narrowed: diff.narrowed,
+      // 文件数抽样：超过上限时只把最近改动的一批交给 AI。
+      max_files: diff.maxFiles,
+      files_limited: diff.filesLimited,
+      reviewed_files: diff.reviewFileCount,
+      omitted_files: diff.omittedFiles,
+      // 是否因墙钟超时被强制收束。
+      timed_out: timeoutAborted,
     },
     tokens_used: submitted.tokens_used ?? 0,
     // 适配层不再内联/截断 diff，agent 可自行查看完整提交区间，故恒为 false。

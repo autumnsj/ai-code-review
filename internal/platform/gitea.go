@@ -37,34 +37,101 @@ func (c *giteaClient) Me(ctx context.Context) (string, error) {
 	return u.Login, nil
 }
 
+// giteaRepo 是 Gitea /repos、/user/repos、/orgs/{org}/repos 共用的仓库字段子集。
+type giteaRepo struct {
+	FullName string `json:"full_name"`
+	CloneURL string `json:"clone_url"`
+	HTMLURL  string `json:"html_url"`
+	Default  string `json:"default_branch"`
+	Private  bool   `json:"private"`
+}
+
+// fetchRepoPage 拉取一页仓库列表（Gitea 单页 limit 上限 50）。
+func (c *giteaClient) fetchRepoPage(ctx context.Context, endpoint string, page int) ([]giteaRepo, error) {
+	u := setQuery(c.base+endpoint, map[string]string{
+		"limit": "50", "page": itoa(page),
+	})
+	body, err := httpGet(ctx, u, c.header)
+	if err != nil {
+		return nil, err
+	}
+	var repos []giteaRepo
+	if err := decodeJSON(body, &repos); err != nil {
+		return nil, err
+	}
+	return repos, nil
+}
+
+// appendRepos 把仓库追加到 out，按 full_name 去重。
+func appendGiteaRepos(out *[]RepoInfo, seen map[string]bool, repos []giteaRepo) {
+	for _, r := range repos {
+		if r.FullName == "" || seen[r.FullName] {
+			continue
+		}
+		seen[r.FullName] = true
+		*out = append(*out, RepoInfo{
+			Name: r.FullName, CloneURL: r.CloneURL, WebURL: r.HTMLURL,
+			DefaultBranch: r.Default, Private: r.Private,
+		})
+	}
+}
+
 func (c *giteaClient) ListRepos(ctx context.Context) ([]RepoInfo, error) {
+	if c.base == "" {
+		return nil, fmt.Errorf("Gitea 需要填写 API 地址（自建实例）")
+	}
 	var out []RepoInfo
+	seen := make(map[string]bool)
+
+	// 1) 个人仓库 + 协作者仓库 + 组织成员仓库（显式带 affiliation=organization_member，
+	//    Gitea /user/repos 默认不返回通过团队授权的组织仓库）。
 	for page := 1; page <= 50; page++ {
 		u := setQuery(c.base+"/api/v1/user/repos", map[string]string{
 			"limit": "50", "page": itoa(page),
+			"affiliation": "owner,collaborator,organization_member",
 		})
 		body, err := httpGet(ctx, u, c.header)
 		if err != nil {
 			return nil, err
 		}
-		var repos []struct {
-			FullName string `json:"full_name"`
-			CloneURL string `json:"clone_url"`
-			HTMLURL  string `json:"html_url"`
-			Default  string `json:"default_branch"`
-			Private  bool   `json:"private"`
-		}
+		var repos []giteaRepo
 		if err := decodeJSON(body, &repos); err != nil {
 			return nil, err
 		}
-		for _, r := range repos {
-			out = append(out, RepoInfo{
-				Name: r.FullName, CloneURL: r.CloneURL, WebURL: r.HTMLURL,
-				DefaultBranch: r.Default, Private: r.Private,
-			})
-		}
+		appendGiteaRepos(&out, seen, repos)
 		if len(repos) < 50 {
 			break
+		}
+	}
+
+	// 2) 组织仓库：Gitea 的 /user/repos 不保证返回所有通过团队(team)授权的组织仓库，
+	// 逐个拉取用户所属组织的仓库列表补齐（按 full_name 去重）。
+	body, err := httpGet(ctx, c.base+"/api/v1/user/orgs", c.header)
+	if err != nil {
+		// 组织列表是「补齐」用途，不可得时不阻断个人仓库结果。
+		return out, nil
+	}
+	var orgs []struct {
+		UserName string `json:"username"`
+	}
+	if err := decodeJSON(body, &orgs); err != nil {
+		return out, nil
+	}
+	for _, org := range orgs {
+		if org.UserName == "" {
+			continue
+		}
+		endpoint := "/api/v1/orgs/" + url.PathEscape(org.UserName) + "/repos"
+		for page := 1; page <= 50; page++ {
+			repos, err := c.fetchRepoPage(ctx, endpoint, page)
+			if err != nil {
+				// 单个组织无权限/不可达时跳过，继续其它组织。
+				break
+			}
+			appendGiteaRepos(&out, seen, repos)
+			if len(repos) < 50 {
+				break
+			}
 		}
 	}
 	return out, nil

@@ -1,0 +1,44 @@
+# 发布镜像：Go 后端（内嵌前端）+ Node/Pi Coding Agent 审查引擎 + pi-agent 适配层。
+# 二进制需先在本地交叉编译：
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o aicr-linux-amd64 ./cmd/server
+# 前端需先构建（web/dist，被 go:embed 嵌入二进制）：
+#   (cd web && npm ci && npm run build)
+FROM node:24-bookworm-slim
+
+# node:*-bookworm-slim 已存在 gid=100(users)，复用之；固定 uid=100 以匹配数据卷属主。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git ca-certificates tini wget ripgrep openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u app >/dev/null 2>&1 \
+        || adduser --system --uid 100 --gid 100 --home /home/app --no-create-home app) \
+    && mkdir -p /data /opt/pi-agent \
+    && chown -R app:100 /data
+
+# Go 后端（已内嵌前端构建产物）
+COPY aicr-linux-amd64 /usr/local/bin/aicr
+RUN chmod +x /usr/local/bin/aicr
+
+# codegraph：供审查 agent 精确定位符号/调用关系，减少盲目 grep/read（纯 JS + WASM，无需编译工具链）。
+RUN npm install -g @colbymchenry/codegraph@1.4.1 --no-audit --no-fund \
+    && chmod +x /usr/local/bin/codegraph
+
+# pi-agent 适配层 + code-review skill + Pi Coding Agent SDK
+COPY deploy/pi-agent /opt/pi-agent
+RUN cd /opt/pi-agent \
+    && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+    && chmod +x /opt/pi-agent/pi-agent.sh \
+    && ln -s /opt/pi-agent/pi-agent.sh /usr/local/bin/pi-agent \
+    && chown -R app:100 /opt/pi-agent
+
+USER app
+WORKDIR /app
+EXPOSE 8080
+VOLUME ["/data"]
+ENV AICR_DATA_DIR=/data \
+    AICR_PI_AGENT_BIN=pi-agent \
+    PI_SKIP_VERSION_CHECK=1 \
+    PI_TELEMETRY=0 \
+    HOME=/tmp
+ENTRYPOINT ["/usr/bin/tini","--"]
+CMD ["aicr"]

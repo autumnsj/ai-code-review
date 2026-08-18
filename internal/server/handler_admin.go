@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+var dimKeyRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // fetchModelsReq 拉取 OpenAI 兼容接口的模型列表。api_key 可选：
 // 前端可传当前行已填未保存的 key；不传则后端会尝试从已保存的 llm 设置里按 base_url 匹配。
@@ -342,4 +345,74 @@ func (s *Server) updateServerSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// GET /api/admin/settings/dimensions
+func (s *Server) getDimensions(c *gin.Context) {
+	var dims []domain.DimensionSpec
+	if err := s.store.GetSetting(c.Request.Context(), "score_dimensions", &dims); err != nil {
+		if !store.IsSettingNotFound(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取失败"})
+			return
+		}
+		dims = domain.DefaultDimensions()
+	}
+	if len(dims) == 0 {
+		dims = domain.DefaultDimensions()
+	}
+	c.JSON(http.StatusOK, gin.H{"dimensions": dims})
+}
+
+// PUT /api/admin/settings/dimensions
+func (s *Server) updateDimensions(c *gin.Context) {
+	var req struct {
+		Dimensions []domain.DimensionSpec `json:"dimensions"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Dimensions) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "至少配置一个打分维度"})
+		return
+	}
+	seen := make(map[string]bool, len(req.Dimensions))
+	var total float64
+	for i := range req.Dimensions {
+		d := &req.Dimensions[i]
+		d.Key = strings.TrimSpace(d.Key)
+		d.Label = strings.TrimSpace(d.Label)
+		if d.Key == "" || !dimKeyRe.MatchString(d.Key) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "维度标识只能包含小写字母、数字、下划线"})
+			return
+		}
+		if seen[d.Key] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "维度标识重复: " + d.Key})
+			return
+		}
+		seen[d.Key] = true
+		if d.Label == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "维度名称不能为空"})
+			return
+		}
+		if d.Weight < 0 {
+			d.Weight = 0
+		}
+		total += d.Weight
+	}
+	// 归一化权重；若全为 0 则平均分配。
+	if total <= 0 {
+		for i := range req.Dimensions {
+			req.Dimensions[i].Weight = 1.0 / float64(len(req.Dimensions))
+		}
+	} else {
+		for i := range req.Dimensions {
+			req.Dimensions[i].Weight = req.Dimensions[i].Weight / total
+		}
+	}
+	if err := s.store.SetSetting(c.Request.Context(), "score_dimensions", req.Dimensions); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "dimensions": req.Dimensions})
 }

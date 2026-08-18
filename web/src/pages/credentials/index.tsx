@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  App, Button, Form, Input, Modal, Popconfirm, Radio, Space, Table, Tag, Typography,
+  App, Button, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Typography,
 } from 'antd'
 import { CopyOutlined, DeleteOutlined, KeyOutlined, PlusOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -49,7 +49,14 @@ export default function CredentialsPage() {
           { title: '名称', dataIndex: 'name', width: 200 },
           {
             title: '类型', dataIndex: 'type', width: 120,
-            render: (t: CredentialType) => t === 'ssh' ? <Tag color="blue">SSH 密钥</Tag> : <Tag>HTTPS Token</Tag>,
+            render: (t: CredentialType, r: Credential) => (
+              <Space direction="vertical" size={0}>
+                {t === 'ssh' ? <Tag color="blue">SSH 密钥</Tag> : <Tag>HTTPS Token</Tag>}
+                {t === 'https_token' && r.provider && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>{r.provider}{r.api_base_url ? ` · ${r.api_base_url}` : ''}</Text>
+                )}
+              </Space>
+            ),
           },
           {
             title: '指纹 / 掩码', key: 'ident',
@@ -135,10 +142,14 @@ function CreateCredentialModal({
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ type: 'ssh', ssh_mode: 'generate' }}
+        initialValues={{ type: 'ssh', ssh_mode: 'generate', provider: 'github' }}
         onFinish={(v) => {
           const secret = v.type === 'ssh' ? (v.ssh_mode === 'paste' ? (v.private_key ?? '') : '') : (v.token ?? '')
-          create.mutate({ name: v.name, type: v.type, secret })
+          create.mutate({
+            name: v.name, type: v.type, secret,
+            provider: v.type === 'https_token' ? v.provider : undefined,
+            api_base_url: v.type === 'https_token' ? (v.api_base_url || undefined) : undefined,
+          })
         }}
       >
         <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}>
@@ -173,9 +184,26 @@ function CreateCredentialModal({
         )}
 
         {type === 'https_token' && (
-          <Form.Item label="Token" name="token" rules={[{ required: true, message: '请输入 Token' }]}>
-            <Input.Password placeholder="ghp_... / glpat-..." autoComplete="new-password" />
-          </Form.Item>
+          <>
+            <Form.Item label="Token" name="token" rules={[{ required: true, message: '请输入 Token' }]}>
+              <Input.Password placeholder="ghp_... / glpat-..." autoComplete="new-password" />
+            </Form.Item>
+            <Form.Item label="所属平台" name="provider" extra="用于「从平台导入仓库」与解析分支；同一平台可建多个凭据。">
+              <Select options={[
+                { value: 'github', label: 'GitHub' },
+                { value: 'gitlab', label: 'GitLab' },
+                { value: 'gitee', label: 'Gitee（码云）' },
+                { value: 'gitea', label: 'Gitea（自建）' },
+              ]} />
+            </Form.Item>
+            <Form.Item
+              label="API 地址"
+              name="api_base_url"
+              extra="自建实例（如 Gitea / GH Enterprise / 自建 GitLab）才需要填写，官方平台留空。"
+            >
+              <Input placeholder="https://gitea.example.com" />
+            </Form.Item>
+          </>
         )}
       </Form>
     </Modal>

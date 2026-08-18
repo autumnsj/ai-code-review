@@ -11,13 +11,16 @@ import ReviewsPage from './pages/reviews'
 import ReviewDetailPage from './pages/reviews/detail'
 import JobsPage from './pages/jobs'
 import AuthorsStatsPage from './pages/stats/authors'
+import MembersPage from './pages/members'
 import SettingsPage from './pages/settings'
 import PublicReportPage from './pages/public/report'
+import PublicAuthorReportPage from './pages/public/authorReport'
 
 export const router = createBrowserRouter([
   { path: '/login', element: <RequireBootstrap><LoginPage /></RequireBootstrap> },
   { path: '/setup', element: <SetupPage /> },
   { path: '/reports/:token', element: <PublicReportPage /> },
+  { path: '/author-reports/:token', element: <PublicAuthorReportPage /> },
   {
     path: '/admin',
     element: <RequireBootstrap><AdminLayout /></RequireBootstrap>,
@@ -30,6 +33,7 @@ export const router = createBrowserRouter([
       { path: 'reviews', element: <ReviewsPage /> },
       { path: 'reviews/:id', element: <ReviewDetailPage /> },
       { path: 'stats/authors', element: <AuthorsStatsPage /> },
+      { path: 'members', element: <MembersPage /> },
       { path: 'jobs', element: <JobsPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],

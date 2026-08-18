@@ -6,10 +6,11 @@ import {
 } from 'antd'
 import { LinkOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { reviewsApi, Finding } from '../../api/reviews'
+import { reviewsApi, Finding, dimensionRows, Review, AuthorReport } from '../../api/reviews'
 import ScoreRing from '../../components/ScoreRing'
 import SeverityTag from '../../components/SeverityTag'
 import { StatusTag } from '../../components/SeverityTag'
+import ReviewLogPanel from './ReviewLogPanel'
 
 const { Text } = Typography
 
@@ -27,6 +28,11 @@ export default function ReviewDetailPage() {
   const { data: findings = [], isLoading } = useQuery({
     queryKey: ['findings', reviewId],
     queryFn: () => reviewsApi.findings(reviewId),
+    enabled: review?.status === 'succeeded',
+  })
+  const { data: authorReports = [] } = useQuery({
+    queryKey: ['author-reports', reviewId],
+    queryFn: () => reviewsApi.authorReports(reviewId),
     enabled: review?.status === 'succeeded',
   })
 
@@ -57,8 +63,11 @@ export default function ReviewDetailPage() {
 
       {review.error && <Alert type="error" message="审查失败" description={review.error} showIcon style={{ marginBottom: 16 }} />}
 
-      {(review.status === 'running' || review.status === 'pending') && (
-        <Card><Spin tip="审查进行中..." /></Card>
+      {(review.status === 'running' || review.status === 'pending' ||
+        review.status === 'succeeded' || review.status === 'failed') && (
+        <div style={{ marginBottom: 16 }}>
+          <ReviewLogPanel reviewId={review.id} running={review.status === 'running' || review.status === 'pending'} />
+        </div>
       )}
 
       {review.status === 'succeeded' && (
@@ -71,9 +80,23 @@ export default function ReviewDetailPage() {
               </div>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="仓库">{review.repo_name}</Descriptions.Item>
-                <Descriptions.Item label="Commit"><Text code>{review.commit_sha.slice(0, 12)}</Text></Descriptions.Item>
-                <Descriptions.Item label="作者">{review.author}</Descriptions.Item>
+                <Descriptions.Item label="分支">{review.target_ref || '-'}</Descriptions.Item>
+                <Descriptions.Item label="Commit 区间">
+                  {review.base_sha
+                    ? <Text code>{review.base_sha.slice(0, 8)}..{review.commit_sha.slice(0, 8)}</Text>
+                    : <Text code>{review.commit_sha.slice(0, 12)}</Text>}
+                  {review.base_sha && (
+                    <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                      head {review.commit_sha.slice(0, 8)} / base {review.base_sha.slice(0, 8)}
+                    </Typography.Text>
+                  )}
+                </Descriptions.Item>
+                <Descriptions.Item label="作者">{review.author || '-'}</Descriptions.Item>
                 {stats && <Descriptions.Item label="变更">{stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}</Descriptions.Item>}
+                <Descriptions.Item label="触发时间">{dayjs(review.triggered_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+                <Descriptions.Item label="完成时间">
+                  {review.finished_at ? dayjs(review.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                </Descriptions.Item>
                 <Descriptions.Item label="耗时">
                   {review.started_at && review.finished_at
                     ? `${dayjs(review.finished_at).diff(dayjs(review.started_at), 'second')}s` : '-'}
@@ -86,6 +109,40 @@ export default function ReviewDetailPage() {
           {review.summary && (
             <Card title="审查摘要" style={{ marginBottom: 16 }}>
               <Typography.Paragraph>{review.summary}</Typography.Paragraph>
+            </Card>
+          )}
+
+          {authorReports.length > 0 && (
+            <Card title={`作者报告（${authorReports.length}）`} style={{ marginBottom: 16 }}>
+              <Table
+                rowKey="id"
+                dataSource={authorReports}
+                pagination={false}
+                size="middle"
+                columns={[
+                  { title: '提交者', dataIndex: 'author', render: (_: string, r: AuthorReport) =>
+                    r.author_name ? `${r.author_name} <${r.author}>` : r.author },
+                  { title: '评分', dataIndex: 'score_total', width: 90, render: (v: number) =>
+                    <Tag color={v >= 80 ? 'green' : v >= 60 ? 'orange' : 'red'}>{v}</Tag> },
+                  { title: '问题数', dataIndex: 'findings_count', width: 90 },
+                  { title: '严重度分布', width: 260, render: (_: any, r: AuthorReport) => (
+                    <Space size={4}>
+                      {r.critical_count > 0 && <Tag color="red">C {r.critical_count}</Tag>}
+                      {r.high_count > 0 && <Tag color="orange">H {r.high_count}</Tag>}
+                      {r.medium_count > 0 && <Tag color="gold">M {r.medium_count}</Tag>}
+                      {r.low_count > 0 && <Tag>L {r.low_count}</Tag>}
+                      {r.info_count > 0 && <Tag>I {r.info_count}</Tag>}
+                    </Space>
+                  )},
+                  { title: '改动', width: 150, render: (_: any, r: AuthorReport) =>
+                    `+${r.additions} / -${r.deletions}，${r.files_changed} 文件` },
+                  { title: '操作', width: 120, render: (_: any, r: AuthorReport) => (
+                    <Button size="small" type="link" href={`/author-reports/${r.public_token}`} target="_blank">
+                      个人报告
+                    </Button>
+                  )},
+                ]}
+              />
             </Card>
           )}
 
@@ -130,17 +187,12 @@ export default function ReviewDetailPage() {
   )
 }
 
-function ScoreBars({ review }: { review: any }) {
-  const dims = [
-    { label: '架构', score: review.score_arch },
-    { label: '质量', score: review.score_quality },
-    { label: '安全', score: review.score_security },
-    { label: '可维护性', score: review.score_maint },
-  ]
+function ScoreBars({ review }: { review: Review }) {
+  const dims = dimensionRows(review)
   return (
     <div style={{ minWidth: 240 }}>
       {dims.map(d => (
-        <div key={d.label} style={{ marginBottom: 12 }}>
+        <div key={d.key} style={{ marginBottom: 12 }}>
           <Space style={{ justifyContent: 'space-between', width: '100%' }}>
             <span>{d.label}</span><strong>{d.score}</strong>
           </Space>

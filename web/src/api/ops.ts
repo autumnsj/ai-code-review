@@ -38,6 +38,4 @@ export const opsApi = {
   listJobs: (params: { status?: string; page?: number; page_size?: number }) =>
     http.get<{ items: Job[]; total: number; page: number; page_size: number }>('/api/admin/jobs', { params }).then(r => r.data),
   retryJob: (id: number) => http.post(`/api/admin/jobs/${id}/retry`).then(r => r.data),
-  trigger: (id: number, body: { commit_sha: string; base_sha?: string; target_ref?: string; source_ref?: string }) =>
-    http.post<{ review_id: number; public_token: string }>(`/api/admin/repos/${id}/trigger`, body).then(r => r.data),
 }

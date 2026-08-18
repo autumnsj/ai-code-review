@@ -58,6 +58,13 @@ export interface ModelItem {
   name?: string
 }
 
+export interface DimensionSpec {
+  key: string
+  label: string
+  description?: string
+  weight: number
+}
+
 export const settingsApi = {
   getLLM: () => http.get<LLMSettings>('/api/admin/settings/llm').then(r => r.data),
   updateLLM: (v: LLMUpdate) => http.put('/api/admin/settings/llm', v).then(r => r.data),
@@ -71,4 +78,8 @@ export const settingsApi = {
     http.get<{ items: NotifierChannel[] }>('/api/admin/settings/notifications').then(r => r.data),
   updateNotifiers: (v: NotifierChannelInput[]) =>
     http.put('/api/admin/settings/notifications', v).then(r => r.data),
+  getDimensions: () =>
+    http.get<{ dimensions: DimensionSpec[] }>('/api/admin/settings/dimensions').then(r => r.data.dimensions),
+  updateDimensions: (dimensions: DimensionSpec[]) =>
+    http.put<{ dimensions: DimensionSpec[] }>('/api/admin/settings/dimensions', { dimensions }).then(r => r.data),
 }

@@ -50,6 +50,8 @@ func (f *flexibleTime) Scan(v any) error {
 // AuthorStats 单个作者的汇总指标（仅统计 succeeded 的审查）。
 type AuthorStats struct {
 	Author        string    `json:"author"`
+	DisplayName   string    `json:"display_name"`
+	Team          string    `json:"team"`
 	ReviewCount   int64     `json:"review_count"`
 	AvgTotal      float64   `json:"avg_total"`
 	AvgArch       float64   `json:"avg_arch"`
@@ -88,41 +90,35 @@ var authorSortColumns = map[string]string{
 	"findings":     "findings_total",
 }
 
-// findingsAgg 预先按 review 聚合问题数，避免 LEFT JOIN 把审查级的增删行按问题数重复累加。
-const findingsAgg = `
-	LEFT JOIN (
-		SELECT review_id,
-			COUNT(*) AS f_total,
-			SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS f_critical,
-			SUM(CASE WHEN severity='high'     THEN 1 ELSE 0 END) AS f_high,
-			SUM(CASE WHEN severity='medium'   THEN 1 ELSE 0 END) AS f_medium,
-			SUM(CASE WHEN severity='low'      THEN 1 ELSE 0 END) AS f_low,
-			SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS f_info
-		FROM findings GROUP BY review_id
-	) fa ON fa.review_id = rv.id`
-
+// 数据源为 review_author_reports（按 git blame 归属拆分后的个人报告）：
+// 多作者推送会为每位参与者贡献一行，评分/问题数/改动量都是该作者自己的。
+// 单次单作者审查同样会落一条作者报告，统计口径一致。
 const authorSelect = `
 	SELECT
-		rv.author,
+		rar.author,
+		COALESCE(MAX(a.display_name),'')                  AS display_name,
+		COALESCE(MAX(a.team),'')                          AS team,
 		COUNT(*)                                          AS review_count,
-		COALESCE(AVG(rv.score_total),0)                  AS avg_total,
-		COALESCE(AVG(rv.score_arch),0)                   AS avg_arch,
-		COALESCE(AVG(rv.score_quality),0)                AS avg_quality,
-		COALESCE(AVG(rv.score_security),0)               AS avg_security,
-		COALESCE(AVG(rv.score_maint),0)                  AS avg_maint,
-		COALESCE(SUM(rv.additions),0)                    AS additions,
-		COALESCE(SUM(rv.deletions),0)                    AS deletions,
-		COALESCE(SUM(rv.files_changed),0)                AS files_changed,
-		COALESCE(SUM(rv.tokens_used),0)                  AS tokens_used,
-		COALESCE(SUM(fa.f_total),0)                      AS findings_total,
-		COALESCE(SUM(fa.f_critical),0)                   AS critical,
-		COALESCE(SUM(fa.f_high),0)                       AS high,
-		COALESCE(SUM(fa.f_medium),0)                     AS medium,
-		COALESCE(SUM(fa.f_low),0)                        AS low,
-		COALESCE(SUM(fa.f_info),0)                       AS info,
+		COALESCE(AVG(rar.score_total),0)                 AS avg_total,
+		COALESCE(AVG(rar.score_arch),0)                  AS avg_arch,
+		COALESCE(AVG(rar.score_quality),0)               AS avg_quality,
+		COALESCE(AVG(rar.score_security),0)              AS avg_security,
+		COALESCE(AVG(rar.score_maint),0)                 AS avg_maint,
+		COALESCE(SUM(rar.additions),0)                   AS additions,
+		COALESCE(SUM(rar.deletions),0)                   AS deletions,
+		COALESCE(SUM(rar.files_changed),0)               AS files_changed,
+		0                                                AS tokens_used,
+		COALESCE(SUM(rar.findings_count),0)              AS findings_total,
+		COALESCE(SUM(rar.critical_count),0)              AS critical,
+		COALESCE(SUM(rar.high_count),0)                  AS high,
+		COALESCE(SUM(rar.medium_count),0)                AS medium,
+		COALESCE(SUM(rar.low_count),0)                   AS low,
+		COALESCE(SUM(rar.info_count),0)                  AS info,
 		MAX(rv.finished_at)                              AS last_reviewed
-	FROM reviews rv` + findingsAgg + `
-	WHERE rv.status='succeeded' AND rv.author<>''`
+	FROM review_author_reports rar
+	JOIN reviews rv ON rv.id = rar.review_id
+	LEFT JOIN authors a ON a.git_login = rar.author
+	WHERE rv.status='succeeded' AND rar.author<>''`
 
 // ListAuthorStats 按作者聚合统计。
 func (s *Store) ListAuthorStats(ctx context.Context, f AuthorFilter) ([]*AuthorStats, error) {
@@ -131,7 +127,7 @@ func (s *Store) ListAuthorStats(ctx context.Context, f AuthorFilter) ([]*AuthorS
 	if orderCol == "" {
 		orderCol = "avg_total"
 	}
-	q += " GROUP BY rv.author ORDER BY " + orderCol + " DESC, review_count DESC"
+	q += " GROUP BY rar.author ORDER BY " + orderCol + " DESC, review_count DESC"
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -158,7 +154,7 @@ func (s *Store) ListAuthorStats(ctx context.Context, f AuthorFilter) ([]*AuthorS
 // GetAuthorStats 返回单个作者的聚合。
 func (s *Store) GetAuthorStats(ctx context.Context, f AuthorFilter) (*AuthorStats, error) {
 	q, args := s.buildAuthorQuery(f)
-	q += " GROUP BY rv.author"
+	q += " GROUP BY rar.author"
 	row := s.db.QueryRowContext(ctx, s.rebind(q), args...)
 	return scanAuthorStats(row.Scan)
 }
@@ -177,10 +173,10 @@ func (s *Store) buildAuthorQuery(f AuthorFilter) (string, []any) {
 		args = append(args, f.RepoID)
 	}
 	if f.AuthorExact != "" {
-		b.WriteString(" AND rv.author = ?")
+		b.WriteString(" AND rar.author = ?")
 		args = append(args, f.AuthorExact)
 	} else if f.Author != "" {
-		b.WriteString(" AND rv.author LIKE ?")
+		b.WriteString(" AND rar.author LIKE ?")
 		args = append(args, "%"+f.Author+"%")
 	}
 	return b.String(), args
@@ -190,7 +186,7 @@ func scanAuthorStats(scan func(...any) error) (*AuthorStats, error) {
 	var a AuthorStats
 	var last flexibleTime
 	err := scan(
-		&a.Author, &a.ReviewCount,
+		&a.Author, &a.DisplayName, &a.Team, &a.ReviewCount,
 		&a.AvgTotal, &a.AvgArch, &a.AvgQuality, &a.AvgSecurity, &a.AvgMaint,
 		&a.Additions, &a.Deletions, &a.FilesChanged, &a.TokensUsed,
 		&a.FindingsTotal, &a.Critical, &a.High, &a.Medium, &a.Low, &a.Info,

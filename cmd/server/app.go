@@ -153,7 +153,7 @@ func (a *application) setRuntime(rt *runtime, h http.Handler) {
 // completeBootstrap 是 setup 向导的完成回调：开库迁移、写引导文件、装配运行时并热切换。
 func (a *application) completeBootstrap(ctx context.Context, driver, dsn, adminPassword, baseURL string) error {
 	drv := store.Driver(driver)
-	if drv != store.DriverSQLite && drv != store.DriverPostgres {
+	if drv != store.DriverSQLite && drv != store.DriverPostgres && drv != store.DriverMySQL {
 		return fmt.Errorf("不支持的数据库类型 %q", driver)
 	}
 	rt, router, err := a.buildRuntime(driver, dsn, adminPassword, baseURL)
@@ -176,7 +176,7 @@ func (a *application) completeBootstrap(ctx context.Context, driver, dsn, adminP
 // buildRuntime 打开数据库、初始化设置并装配正式 HTTP 路由（不启动 worker）。
 func (a *application) buildRuntime(driver, dsn, adminPassword, baseURL string) (*runtime, http.Handler, error) {
 	drv := store.Driver(driver)
-	db, err := store.Open(drv, dsn)
+	db, err := store.Open(drv, dsn, a.log.Sugar())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -189,7 +189,7 @@ func (a *application) buildRuntime(driver, dsn, adminPassword, baseURL string) (
 	}
 	jwtMgr := auth.NewManager(serverCfg.JWTSecret, 24*time.Hour)
 
-	analyzer.CleanupOldWorkDirs(a.cfg.DataDir, 24*time.Hour, a.log)
+	analyzer.CleanupOldWorkDirs(a.cfg.DataDir, 30*24*time.Hour, a.log)
 
 	sched := queue.New(st, a.log, a.cfg.WorkerConcurrency)
 	piAgent := analyzer.NewCLI(a.cfg.PiAgentBin, a.cfg.DataDir, a.log)
@@ -209,7 +209,7 @@ func (a *application) buildRuntime(driver, dsn, adminPassword, baseURL string) (
 	return &runtime{st: st, sqlDB: db, sched: sched}, router, nil
 }
 
-// startWorker 启动队列调度器，返回可等待其退出的 channel。
+// startWorker 启动队列调度器（及配套的僵尸审查 reaper），返回可等待其退出的 channel。
 func (a *application) startWorker(rt *runtime) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -219,4 +219,5 @@ func (a *application) startWorker(rt *runtime) {
 		rt.sched.Start(ctx)
 		close(done)
 	}()
+	a.startReaper(ctx, rt.st)
 }

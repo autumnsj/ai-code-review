@@ -1,7 +1,7 @@
 import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm, AutoComplete, Tooltip } from 'antd'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem } from '../../api/settings'
+import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec } from '../../api/settings'
 import { ReloadOutlined } from '@ant-design/icons'
 
 export default function SettingsPage() {
@@ -11,6 +11,7 @@ export default function SettingsPage() {
       <Tabs
         items={[
           { key: 'llm', label: 'AI 模型', children: <LLMPane /> },
+          { key: 'dimensions', label: '打分维度', children: <DimensionsPane /> },
           { key: 'notifications', label: '通知', children: <NotificationsPane /> },
           { key: 'server', label: '服务', children: <ServerPane /> },
           { key: 'security', label: '安全', children: <SecurityPane /> },
@@ -127,6 +128,8 @@ function LLMPane() {
         可配置多个 OpenAI 兼容模型，并选择一个作为<b>默认模型</b>（审查时使用）。API Key 脱敏保存，留空表示不修改。
       </Typography.Paragraph>
       <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
+        {/* 注册 default_id 字段：仅靠 setFieldValue 写入的值不会被 onFinish 收集，必须有注册字段托管。 */}
+        <Form.Item name="default_id" hidden><Input /></Form.Item>
         <Form.List name="profiles">
           {(fields, { add, remove }) => (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -311,6 +314,98 @@ function NotificationsPane() {
     </Card>
   )
 }
+
+function DimensionsPane() {
+  const qc = useQueryClient()
+  const { message } = App.useApp()
+  const [form] = Form.useForm<{ dimensions: DimensionSpec[] }>()
+  const { data, isLoading } = useQuery({
+    queryKey: ['settings-dimensions'],
+    queryFn: settingsApi.getDimensions,
+  })
+  useEffect(() => {
+    if (data) form.setFieldsValue({ dimensions: data })
+  }, [data, form])
+
+  const save = useMutation({
+    mutationFn: (v: { dimensions: DimensionSpec[] }) => settingsApi.updateDimensions(v.dimensions),
+    onSuccess: (data) => {
+      message.success('已保存')
+      form.setFieldsValue({ dimensions: data.dimensions })
+      qc.invalidateQueries({ queryKey: ['settings-dimensions'] })
+    },
+    onError: (e: any) => message.error(e?.response?.data?.error || '保存失败'),
+  })
+
+  const newDim = (): DimensionSpec => ({
+    key: '', label: '', description: '', weight: 1,
+  })
+
+  return (
+    <Card
+      loading={isLoading}
+      title="打分维度"
+      extra={
+        <Button onClick={() => form.setFieldsValue({ dimensions: DEFAULT_DIMENSIONS })}>恢复默认</Button>
+      }
+    >
+      <Typography.Paragraph type="secondary">
+        定义全局打分维度：名称（展示用）、标识（小写字母/数字/下划线）、权重（保存时自动归一化为百分比），以及一段评分标准描述（喂给 AI）。
+      </Typography.Paragraph>
+      <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
+        <Form.List name="dimensions">
+          {(fields, { add, remove }) => (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {fields.map(({ key, name }) => (
+                <Card key={key} size="small" title={`维度 ${name + 1}`} extra={
+                  <Popconfirm title="删除该维度？" onConfirm={() => remove(name)}>
+                    <Button danger size="small">删除</Button>
+                  </Popconfirm>
+                }>
+                  <Space style={{ width: '100%' }} size="middle" wrap>
+                    <Form.Item
+                      label="名称" name={[name, 'label']} rules={[{ required: true, message: '请填写名称' }]}
+                    >
+                      <Input placeholder="安全性" style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item
+                      label="标识" name={[name, 'key']}
+                      rules={[
+                        { required: true, message: '请填写标识' },
+                        { pattern: /^[a-z0-9_]+$/, message: '仅小写字母、数字、下划线' },
+                      ]}
+                    >
+                      <Input placeholder="security" style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item label="权重" name={[name, 'weight']} rules={[{ required: true }]}>
+                      <InputNumber min={0} step={0.1} style={{ width: 120 }} />
+                    </Form.Item>
+                  </Space>
+                  <Form.Item label="评分标准描述" name={[name, 'description']}>
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="评估代码的安全风险：注入、鉴权、敏感信息泄露、依赖漏洞等。"
+                    />
+                  </Form.Item>
+                </Card>
+              ))}
+              <Button onClick={() => add(newDim())}>+ 添加维度</Button>
+            </Space>
+          )}
+        </Form.List>
+        <Button type="primary" htmlType="submit" loading={save.isPending} style={{ marginTop: 16 }}>保存</Button>
+      </Form>
+    </Card>
+  )
+}
+
+// DEFAULT_DIMENSIONS 与后端 domain.DefaultDimensions 保持一致的内置默认值。
+const DEFAULT_DIMENSIONS: DimensionSpec[] = [
+  { key: 'architecture', label: '架构', weight: 0.2, description: '代码结构、模块划分、耦合度、抽象与设计合理性。' },
+  { key: 'quality', label: '质量', weight: 0.3, description: '代码正确性、可读性、命名、重复、测试覆盖与边界处理。' },
+  { key: 'security', label: '安全', weight: 0.3, description: '注入、硬编码凭据、越权、敏感信息泄露、不安全依赖等安全风险。' },
+  { key: 'maintainability', label: '可维护性', weight: 0.2, description: '可扩展性、复杂度、注释文档、未来修改成本与技术债。' },
+]
 
 function ServerPane() {
   const qc = useQueryClient()

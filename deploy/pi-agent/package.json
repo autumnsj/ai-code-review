@@ -1,0 +1,16 @@
+{
+  "name": "aicr-pi-agent-adapter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless adapter that lets AICR drive Pi Coding Agent via `pi-agent run --input/--output/--workdir`.",
+  "main": "index.mjs",
+  "bin": {
+    "pi-agent": "./pi-agent.sh"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "typebox": "1.3.7",
+    "undici": "8.9.0"
+  }
+}

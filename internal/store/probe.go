@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -20,6 +22,8 @@ func Ping(ctx context.Context, driver Driver, dsn string) error {
 		return pingSQLite(ctx, dsn)
 	case DriverPostgres:
 		return pingPostgres(ctx, dsn)
+	case DriverMySQL:
+		return pingMySQL(ctx, dsn)
 	default:
 		return fmt.Errorf("unsupported driver %q", driver)
 	}
@@ -63,6 +67,75 @@ func pingPostgres(ctx context.Context, dsn string) error {
 	}
 	defer db2.Close()
 	return db2.PingContext(ctx)
+}
+
+// pingMySQL 探测 MySQL 连通性；若目标库不存在（错误 1049 Unknown database），
+// 连到无库连接并尝试 CREATE DATABASE。
+func pingMySQL(ctx context.Context, dsn string) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	db, err := openMySQL(dsn)
+	if err != nil {
+		return err
+	}
+	if err := db.PingContext(ctx); err == nil {
+		db.Close()
+		return nil
+	} else if !isUnknownMySQLError(err) {
+		db.Close()
+		return err
+	}
+	db.Close()
+
+	if err := createMySQLDatabase(ctx, dsn); err != nil {
+		return err
+	}
+	db2, err := openMySQL(dsn)
+	if err != nil {
+		return err
+	}
+	defer db2.Close()
+	return db2.PingContext(ctx)
+}
+
+func isUnknownMySQLError(err error) bool {
+	// go-sql-driver/mysql: Error 1049: Unknown database 'xxx'
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) {
+		return myErr.Number == 1049
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unknown database")
+}
+
+// createMySQLDatabase 解析 DSN 得到库名，用去掉库名的维护连接执行 CREATE DATABASE。
+func createMySQLDatabase(ctx context.Context, dsn string) error {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return err
+	}
+	dbName := cfg.DBName
+	if dbName == "" {
+		return fmt.Errorf("dsn 中没有数据库名")
+	}
+	if !validDBName(dbName) {
+		return fmt.Errorf("invalid database name %q", dbName)
+	}
+	maint := *cfg
+	maint.DBName = ""
+	conn, err := sql.Open("mysql", maint.FormatDSN())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.PingContext(ctx); err != nil {
+		return fmt.Errorf("connect mysql maintenance: %w", err)
+	}
+	// 库名不能参数化；已用 validDBName 做白名单校验。
+	_, err = conn.ExecContext(ctx,
+		"CREATE DATABASE IF NOT EXISTS `"+dbName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	return err
 }
 
 func isUnknownDBError(err error) bool {

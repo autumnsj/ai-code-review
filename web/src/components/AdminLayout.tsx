@@ -20,6 +20,7 @@ const items = [
   { key: '/admin/credentials', icon: <KeyOutlined />, label: <Link to="/admin/credentials">凭据</Link> },
   { key: '/admin/reviews', icon: <AuditOutlined />, label: <Link to="/admin/reviews">审查记录</Link> },
   { key: '/admin/stats', icon: <TeamOutlined />, label: <Link to="/admin/stats/authors">作者排行</Link> },
+  { key: '/admin/members', icon: <TeamOutlined />, label: <Link to="/admin/members">成员备注</Link> },
   { key: '/admin/jobs', icon: <UnorderedListOutlined />, label: <Link to="/admin/jobs">任务队列</Link> },
   { key: '/admin/settings', icon: <SettingOutlined />, label: <Link to="/admin/settings">设置</Link> },
 ]

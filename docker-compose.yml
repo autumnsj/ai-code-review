@@ -9,8 +9,8 @@ services:
     environment:
       - AICR_PORT=8080
       - AICR_DATA_DIR=/data
-      # 留空：首次访问 http://localhost:8080 进入 Web 初始化向导，在页面里选 SQLite/PostgreSQL。
-      # 想无头直接启动（跳过向导），取消注释下两行；postgres 示例见同文件 postgres service。
+      # 留空：首次访问 http://localhost:8080 进入 Web 初始化向导，在页面里选 SQLite/PostgreSQL/MySQL。
+      # 想无头直接启动（跳过向导），取消注释下两行；外部数据库示例见同文件 postgres/mysql service。
       - AICR_DB_DRIVER=${AICR_DB_DRIVER:-}
       - AICR_DB_DSN=${AICR_DB_DSN:-}
       - AICR_ADMIN_PASSWORD=${AICR_ADMIN_PASSWORD:-admin123}
@@ -51,6 +51,22 @@ services:
   #   volumes:
   #     - aicr-pg:/var/lib/postgresql/data
 
+  # 可选：外置 MySQL / MariaDB。启用后设置
+  #   AICR_DB_DRIVER=mysql
+  #   AICR_DB_DSN=aicr:aicrpass@tcp(mysql:3306)/aicr?parseTime=true&loc=Local
+  # mysql:
+  #   image: mysql:8.4
+  #   restart: unless-stopped
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: rootpass
+  #     MYSQL_USER: aicr
+  #     MYSQL_PASSWORD: aicrpass
+  #     MYSQL_DATABASE: aicr
+  #   command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+  #   volumes:
+  #     - aicr-mysql:/var/lib/mysql
+
 volumes:
   aicr-data:
   # aicr-pg:
+  # aicr-mysql:

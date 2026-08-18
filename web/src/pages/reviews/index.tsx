@@ -20,12 +20,12 @@ export default function ReviewsPage() {
     { title: 'ID', dataIndex: 'id', width: 70, render: (v: number, r: Review) => <Link to={`/admin/reviews/${r.id}`}>#{v}</Link> },
     { title: '仓库', dataIndex: 'repo_name', width: 200 },
     {
-      title: '类型', dataIndex: 'event_type', width: 100,
+      title: '提交 / 标题', dataIndex: 'event_type',
       render: (t: string, r: Review) => (
-        <span>
+        <Link to={`/admin/reviews/${r.id}`} style={{ color: 'inherit' }}>
           <Tag>{t === 'pull_request' ? 'PR' : 'Push'}</Tag>
           {r.pr_title || r.commit_sha.slice(0, 8)}
-        </span>
+        </Link>
       ),
     },
     { title: '作者', dataIndex: 'author', width: 120 },
@@ -36,7 +36,13 @@ export default function ReviewsPage() {
           ? <strong style={{ color: scoreColor(v) }}>{v}</strong>
           : '—',
     },
-    { title: '状态', dataIndex: 'status', width: 100, render: (s: string) => <StatusTag status={s} /> },
+    {
+      title: '状态', dataIndex: 'status', width: 110,
+      render: (s: string, r: Review) =>
+        s === 'running' || s === 'pending' ? (
+          <Link to={`/admin/reviews/${r.id}`}><StatusTag status={s} /></Link>
+        ) : <StatusTag status={s} />,
+    },
     {
       title: '时间', dataIndex: 'triggered_at', width: 180,
       render: (t: string) => dayjs(t).format('YYYY-MM-DD HH:mm:ss'),

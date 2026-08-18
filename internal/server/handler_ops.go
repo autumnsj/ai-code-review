@@ -13,10 +13,13 @@ import (
 )
 
 type triggerReq struct {
-	CommitSHA string `json:"commit_sha" binding:"required"`
+	Mode      string `json:"mode"`
+	CommitSHA string `json:"commit_sha"`
 	BaseSHA   string `json:"base_sha"`
 	TargetRef string `json:"target_ref"`
 	SourceRef string `json:"source_ref"`
+	Ref       string `json:"ref"`
+	Force     bool   `json:"force"`
 }
 
 // POST /api/admin/repos/:id/trigger  手动触发一次审查
@@ -31,8 +34,21 @@ func (s *Server) triggerRepoReview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	mode := req.Mode
+	if mode == "" {
+		mode = "commit"
+	}
+	if mode == "commit" && req.CommitSHA == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "commit 模式需要 commit_sha"})
+		return
+	}
+	if mode == "branch" && req.Ref == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "branch 模式需要 ref（分支名）"})
+		return
+	}
 	reviewID, token, duplicated, err := s.starter.StartReview(c.Request.Context(), id, StartReviewInput{
-		CommitSHA: req.CommitSHA, BaseSHA: req.BaseSHA, TargetRef: req.TargetRef, SourceRef: req.SourceRef,
+		Mode: mode, CommitSHA: req.CommitSHA, BaseSHA: req.BaseSHA,
+		TargetRef: req.TargetRef, SourceRef: req.SourceRef, Ref: req.Ref, Force: req.Force,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -43,7 +59,7 @@ func (s *Server) triggerRepoReview(c *gin.Context) {
 		return
 	}
 	if duplicated {
-		c.JSON(http.StatusConflict, gin.H{"error": "该 commit/ref 已有审查记录"})
+		c.JSON(http.StatusConflict, gin.H{"error": "该 commit/ref 已有审查记录，传 force=true 可重新审查"})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"review_id": reviewID, "public_token": token})

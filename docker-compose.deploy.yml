@@ -1,0 +1,31 @@
+services:
+  aicr:
+    image: ai-code-review:latest
+    container_name: ai-code-review
+    restart: unless-stopped
+    ports:
+      - "20018:8080"
+    environment:
+      - AICR_PORT=8080
+      - AICR_DATA_DIR=/data
+      # 不设置 AICR_DB_DRIVER/AICR_DB_DSN/AICR_ADMIN_PASSWORD：
+      # 首次访问走 Web 初始化向导，在页面里自行选择数据库（MySQL/PostgreSQL/SQLite）。
+      # 对外基础地址（你已配置好的 HTTPS 反代域名），向导里可再改。
+      - AICR_BASE_URL=https://review.example.com
+      - AICR_WORKER_CONCURRENCY=2
+      - AICR_LOG_LEVEL=info
+      - AICR_PI_AGENT_BIN=pi-agent
+    volumes:
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/public/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

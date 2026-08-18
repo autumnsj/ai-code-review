@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,7 +15,12 @@ type Driver string
 const (
 	DriverSQLite   Driver = "sqlite"
 	DriverPostgres Driver = "postgres"
+	DriverMySQL    Driver = "mysql"
 )
+
+// ErrDBTooNew 表示数据库 schema 版本高于当前二进制支持的最高版本
+// （通常是用旧版程序打开了被新版程序迁移过的数据库）。此时拒绝启动以避免数据损坏。
+var ErrDBTooNew = errors.New("database schema is newer than this binary supports")
 
 // Store 聚合所有数据访问方法，持有唯一的 *sql.DB 与方言标识。
 type Store struct {
@@ -28,14 +34,29 @@ func New(db *sql.DB, drv Driver) *Store {
 
 func (s *Store) DB() *sql.DB { return s.db }
 
+// isDuplicateErr 判断是否为唯一约束冲突（覆盖三种方言的报错文本）：
+// SQLite "UNIQUE constraint failed"、PostgreSQL "duplicate key value violates unique constraint"、
+// MySQL "Duplicate entry ... for key ..."。
+func isDuplicateErr(err error) bool {
+	if errors.Is(err, ErrDuplicate) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
+}
+
 func (s *Store) Driver() Driver { return s.drv }
 
 // now 返回数据库方言的当前时间戳表达式。
 func (s *Store) now() string {
-	if s.drv == DriverPostgres {
+	switch s.drv {
+	case DriverPostgres:
 		return "NOW()"
+	case DriverMySQL:
+		return "CURRENT_TIMESTAMP"
+	default:
+		return "datetime('now')"
 	}
-	return "datetime('now')"
 }
 
 // rebind 将查询中的 '?' 占位符转换为方言风格。

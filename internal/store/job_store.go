@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ai-code-review/aicr/internal/domain"
@@ -21,7 +20,7 @@ func (s *Store) EnqueueJob(ctx context.Context, kind, payload, idempotencyKey st
 		VALUES(?,?, 'pending', ?, ?, `+s.now()+`)`,
 		kind, payload, maxAttempts, idempotencyKey)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+		if isDuplicateErr(err) {
 			return 0, ErrDuplicate
 		}
 		return 0, err
@@ -31,8 +30,11 @@ func (s *Store) EnqueueJob(ctx context.Context, kind, payload, idempotencyKey st
 
 // ClaimJob 原子抢占一个待执行或租约过期的任务，没有可领取的任务时返回 (nil, nil)。
 func (s *Store) ClaimJob(ctx context.Context, owner string, lease time.Duration) (*domain.Job, error) {
+	if s.drv == DriverMySQL {
+		return s.claimJobMySQL(ctx, owner, lease)
+	}
 	until := time.Now().Add(lease)
-	// 单条原子 UPDATE...RETURNING；MaxOpenConns=1 保证无竞争。
+	// 单条原子 UPDATE...RETURNING；SQLite 靠 MaxOpenConns=1 无竞争，PG 原生支持。
 	row := s.db.QueryRowContext(ctx, s.rebind(`
 		UPDATE jobs SET status='running', lease_owner=?, lease_until=?, started_at=`+s.now()+`,
 			attempts=attempts+1
@@ -48,6 +50,46 @@ func (s *Store) ClaimJob(ctx context.Context, owner string, lease time.Duration)
 		return nil, nil // 没有可领取的任务
 	}
 	return j, err
+}
+
+// claimJobMySQL 用事务 + SELECT ... FOR UPDATE SKIP LOCKED 抢占任务。
+// MySQL 不支持 UPDATE...RETURNING，且多连接池下需要行级锁避免多 worker 抢同一任务。
+func (s *Store) claimJobMySQL(ctx context.Context, owner string, lease time.Duration) (*domain.Job, error) {
+	until := time.Now().Add(lease)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var id int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT id FROM jobs
+		WHERE (status='pending' AND available_at <= NOW())
+		   OR (status='running' AND lease_until < NOW())
+		ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // 没有可领取的任务
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE jobs SET status='running', lease_owner=?, lease_until=?,
+			started_at=NOW(), attempts=attempts+1 WHERE id=?`, owner, until, id); err != nil {
+		return nil, err
+	}
+
+	row := tx.QueryRowContext(ctx, "SELECT "+jobColumns()+" FROM jobs WHERE id=?", id)
+	j, err := scanJob(row.Scan)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return j, nil
 }
 
 // Heartbeat 续租。

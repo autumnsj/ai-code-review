@@ -9,7 +9,11 @@ import (
 
 func (s *Store) GetSetting(ctx context.Context, key string, dst any) error {
 	var raw string
-	err := s.db.QueryRowContext(ctx, s.rebind("SELECT value FROM settings WHERE key=?"), key).Scan(&raw)
+	keyCol := "key"
+	if s.drv == DriverMySQL {
+		keyCol = "`key`"
+	}
+	err := s.db.QueryRowContext(ctx, s.rebind("SELECT value FROM settings WHERE "+keyCol+"=?"), key).Scan(&raw)
 	if err != nil {
 		return err
 	}
@@ -24,10 +28,16 @@ func (s *Store) SetSetting(ctx context.Context, key string, val any) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, s.rebind(`
-		INSERT INTO settings(key, value, updated_at) VALUES(?, ?, `+s.now()+`)
-		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=`+s.now()),
-		key, string(raw))
+	var query string
+	switch s.drv {
+	case DriverMySQL:
+		query = `INSERT INTO settings(` + "`key`" + `, value, updated_at) VALUES(?, ?, ` + s.now() + `)
+			ON DUPLICATE KEY UPDATE value=VALUES(value), updated_at=` + s.now()
+	default:
+		query = `INSERT INTO settings(key, value, updated_at) VALUES(?, ?, ` + s.now() + `)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=` + s.now()
+	}
+	_, err = s.db.ExecContext(ctx, s.rebind(query), key, string(raw))
 	return err
 }
 

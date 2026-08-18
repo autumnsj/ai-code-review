@@ -36,6 +36,18 @@ type setupReq struct {
 	BaseURL       string `json:"base_url" binding:"required"`
 }
 
+// supportedDrivers 列出首次引导支持的数据库。
+var supportedDrivers = map[string]store.Driver{
+	"sqlite":   store.DriverSQLite,
+	"postgres": store.DriverPostgres,
+	"mysql":    store.DriverMySQL,
+}
+
+func parseDriver(name string) (store.Driver, bool) {
+	d, ok := supportedDrivers[name]
+	return d, ok
+}
+
 // RegisteredRouter 构建一个仅供引导期使用的 gin engine，注册 /api/setup/* 并回退到前端 SPA。
 func (h *SetupHandler) RegisteredRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
@@ -66,14 +78,9 @@ func (h *SetupHandler) testConn(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	var drv store.Driver
-	switch req.Driver {
-	case "sqlite":
-		drv = store.DriverSQLite
-	case "postgres":
-		drv = store.DriverPostgres
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "driver 仅支持 sqlite 或 postgres"})
+	drv, ok := parseDriver(req.Driver)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "driver 仅支持 sqlite、postgres 或 mysql"})
 		return
 	}
 	dsn := req.DSN
@@ -95,8 +102,8 @@ func (h *SetupHandler) completeHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Driver != "sqlite" && req.Driver != "postgres" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "driver 仅支持 sqlite 或 postgres"})
+	if _, ok := parseDriver(req.Driver); !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "driver 仅支持 sqlite、postgres 或 mysql"})
 		return
 	}
 	dsn := req.DSN

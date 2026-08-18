@@ -12,6 +12,30 @@ import (
 // RegisterPublicRoutes 注册免鉴权公开接口。
 func (s *Server) RegisterPublicRoutes(r *gin.RouterGroup) {
 	r.GET("/reviews/:token", s.getPublicReview)
+	r.GET("/author-reports/:token", s.getPublicAuthorReport)
+}
+
+// GET /public/author-reports/:token —— 按作者拆分的个人公开报告。
+func (s *Server) getPublicAuthorReport(c *gin.Context) {
+	token := c.Param("token")
+	ar, err := s.store.GetAuthorReportByToken(c.Request.Context(), token)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "报告不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	findings, err := s.store.ListFindingsByAuthor(c.Request.Context(), ar.ReviewID, ar.Author)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"report":   ar,
+		"findings": findings,
+	})
 }
 
 // GET /public/reviews/:token

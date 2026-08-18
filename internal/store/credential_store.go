@@ -16,14 +16,16 @@ type CreateCredentialInput struct {
 	Secret      string // SSH 私钥 PEM / HTTPS token
 	PublicKey   string
 	Fingerprint string
+	Provider    string // https_token 时：平台 github|gitlab|gitee|gitea
+	APIBaseURL  string // 自建实例 API 地址
 }
 
 // CreateCredential 新增凭据。
 func (s *Store) CreateCredential(ctx context.Context, in CreateCredentialInput) (*domain.Credential, error) {
 	id, err := s.insertID(ctx, `
-		INSERT INTO credentials(name, type, secret, public_key, fingerprint)
-		VALUES(?,?,?,?,?)`,
-		in.Name, in.Type, in.Secret, in.PublicKey, in.Fingerprint)
+		INSERT INTO credentials(name, type, secret, public_key, fingerprint, provider, api_base_url)
+		VALUES(?,?,?,?,?,?,?)`,
+		in.Name, in.Type, in.Secret, in.PublicKey, in.Fingerprint, in.Provider, in.APIBaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -33,13 +35,13 @@ func (s *Store) CreateCredential(ctx context.Context, in CreateCredentialInput) 
 // credentialListColumns 不含 secret（列表不回传明文）。
 func credentialListColumns() string {
 	return strings.Join([]string{
-		"id", "name", "type", "public_key", "fingerprint", "created_at", "updated_at",
+		"id", "name", "type", "public_key", "fingerprint", "provider", "api_base_url", "created_at", "updated_at",
 	}, ",")
 }
 
 func credentialAllColumns() string {
 	return strings.Join([]string{
-		"id", "name", "type", "secret", "public_key", "fingerprint", "created_at", "updated_at",
+		"id", "name", "type", "secret", "public_key", "fingerprint", "provider", "api_base_url", "created_at", "updated_at",
 	}, ",")
 }
 
@@ -75,7 +77,7 @@ func (s *Store) GetCredential(ctx context.Context, id int64) (*domain.Credential
 
 // UpdateCredential 更新名称/密钥。name、secret 为 nil 表示不修改；secret 传空字符串视为不修改
 // （前端「留空不修改」会提交空串；如需清空，由显式接口处理，此处不开放）。
-func (s *Store) UpdateCredential(ctx context.Context, id int64, name, secret *string) error {
+func (s *Store) UpdateCredential(ctx context.Context, id int64, name, secret, provider, apiBaseURL *string) error {
 	q := "UPDATE credentials SET updated_at=" + s.now()
 	args := []any{}
 	if name != nil {
@@ -85,6 +87,14 @@ func (s *Store) UpdateCredential(ctx context.Context, id int64, name, secret *st
 	if secret != nil && *secret != "" {
 		q += ", secret=?"
 		args = append(args, *secret)
+	}
+	if provider != nil {
+		q += ", provider=?"
+		args = append(args, *provider)
+	}
+	if apiBaseURL != nil {
+		q += ", api_base_url=?"
+		args = append(args, *apiBaseURL)
 	}
 	q += " WHERE id=?"
 	args = append(args, id)
@@ -116,7 +126,7 @@ func scanCredential(sc credScanner, withSecret bool) (*domain.Credential, error)
 	if withSecret {
 		dests = append(dests, &c.Secret)
 	}
-	dests = append(dests, &c.PublicKey, &c.Fingerprint, &c.CreatedAt, &c.UpdatedAt)
+	dests = append(dests, &c.PublicKey, &c.Fingerprint, &c.Provider, &c.APIBaseURL, &c.CreatedAt, &c.UpdatedAt)
 	if err := sc.Scan(dests...); err != nil {
 		return nil, fmt.Errorf("scan credential: %w", err)
 	}

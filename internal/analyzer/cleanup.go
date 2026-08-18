@@ -8,8 +8,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// CleanupOldWorkDirs 删除超过 maxAge 的遗留工作目录（通常因进程崩溃残留）。
-// 在启动时调用一次即可；正常流程下每次 Run 会 defer RemoveAll。
+// CleanupOldWorkDirs 删除超过 maxAge 未被访问的持久工作目录（work/repo-<id>）。
+// 正常运行时工作目录持久保留供增量 fetch，仅在仓库长时间无审查后由这里保守回收。
+// 在启动时调用一次即可。
 func CleanupOldWorkDirs(dataDir string, maxAge time.Duration, log *zap.Logger) {
 	root := filepath.Join(dataDir, "work")
 	entries, err := os.ReadDir(root)

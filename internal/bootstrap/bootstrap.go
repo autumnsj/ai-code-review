@@ -12,8 +12,8 @@ import (
 
 // Config 持久化的引导配置。
 type Config struct {
-	Driver string `json:"driver"` // sqlite | postgres
-	DSN    string `json:"dsn"`    // sqlite: 文件路径；postgres: 连接串
+	Driver string `json:"driver"` // sqlite | postgres | mysql
+	DSN    string `json:"dsn"`    // sqlite: 文件路径；postgres/mysql: 连接串
 }
 
 // Path 返回引导文件的完整路径。

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ai-code-review/aicr/internal/domain"
@@ -85,8 +87,26 @@ func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL strin
 	md += fmt.Sprintf("**作者**：%s\n", r.Author)
 	if r.Status == "succeeded" {
 		md += fmt.Sprintf("**综合评分**：<font color=\"%s\">**%s**</font>\n", scoreColor(r.ScoreTotal), score)
-		md += fmt.Sprintf("> 架构 %d ｜ 质量 %d ｜ 安全 %d ｜ 可维护 %d\n",
-			r.ScoreArch, r.ScoreQuality, r.ScoreSecurity, r.ScoreMaint)
+		if len(r.ScoreDimensions) > 0 {
+			keys := make([]string, 0, len(r.ScoreDimensions))
+			for k := range r.ScoreDimensions {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				d := r.ScoreDimensions[k]
+				label := d.Label
+				if label == "" {
+					label = k
+				}
+				parts = append(parts, fmt.Sprintf("%s %d", label, d.Score))
+			}
+			md += "> " + strings.Join(parts, " ｜ ") + "\n"
+		} else {
+			md += fmt.Sprintf("> 架构 %d ｜ 质量 %d ｜ 安全 %d ｜ 可维护 %d\n",
+				r.ScoreArch, r.ScoreQuality, r.ScoreSecurity, r.ScoreMaint)
+		}
 		if r.Summary != "" {
 			md += "\n" + r.Summary + "\n"
 		}
@@ -101,6 +121,53 @@ func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL strin
 		md += fmt.Sprintf("\n> 错误：%s\n", r.Error)
 	}
 	md += fmt.Sprintf("\n[查看完整报告](%s)", reportURL)
+	return md
+}
+
+// BuildAuthorMarkdown 生成按作者拆分的审查通知 markdown（每位参与者一条）。
+func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findings []*domain.Finding, reportURL string) string {
+	display := ar.AuthorName
+	if display != "" && ar.Author != "" {
+		display = fmt.Sprintf("%s <%s>", ar.AuthorName, ar.Author)
+	} else if ar.Author != "" {
+		display = ar.Author
+	}
+	md := "## ✅ 代码审查报告（你的提交）\n"
+	md += fmt.Sprintf("**仓库**：[%s](%s)\n", r.RepoName, reportURL)
+	if r.PRTitle != "" {
+		md += fmt.Sprintf("**PR**：%s\n", r.PRTitle)
+	}
+	md += fmt.Sprintf("**Commit**：`%s`\n", shortSHA(r.CommitSHA))
+	md += fmt.Sprintf("**提交者**：%s\n", display)
+	md += fmt.Sprintf("**你的评分**：<font color=\"%s\">**%d**</font>\n", scoreColor(ar.ScoreTotal), ar.ScoreTotal)
+	if len(ar.ScoreDimensions) > 0 {
+		keys := make([]string, 0, len(ar.ScoreDimensions))
+		for k := range ar.ScoreDimensions {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			d := ar.ScoreDimensions[k]
+			label := d.Label
+			if label == "" {
+				label = k
+			}
+			parts = append(parts, fmt.Sprintf("%s %d", label, d.Score))
+		}
+		md += "> " + strings.Join(parts, " ｜ ") + "\n"
+	} else {
+		md += fmt.Sprintf("> 架构 %d ｜ 质量 %d ｜ 安全 %d ｜ 可维护 %d\n",
+			ar.ScoreArch, ar.ScoreQuality, ar.ScoreSecurity, ar.ScoreMaint)
+	}
+	md += fmt.Sprintf("> 改动 +%d / -%d，涉及 %d 个文件\n", ar.Additions, ar.Deletions, ar.FilesChanged)
+	if top := topFindings(findings, 5); len(top) > 0 {
+		md += "\n**需要你关注的问题**：\n"
+		for _, f := range top {
+			md += fmt.Sprintf("- [%s] %s (`%s:%d`)\n", f.Severity, f.Title, f.FilePath, f.LineStart)
+		}
+	}
+	md += fmt.Sprintf("\n[查看你的完整报告](%s)", reportURL)
 	return md
 }
 

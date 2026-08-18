@@ -105,11 +105,32 @@ func (h *Handler) handle(c *gin.Context) {
 	}
 
 	// 校验来源仓库与配置一致（防止 token 泄露后被挪用于其它仓库）
-	if !sameRepo(repo.CloneURL, event.RepoURL) {
+	if !SameRepo(repo.CloneURL, event.RepoURL) {
 		h.log.Warn("webhook repo mismatch",
 			zap.String("configured", repo.CloneURL), zap.String("event", event.RepoURL))
 		c.JSON(http.StatusForbidden, gin.H{"error": "repository mismatch"})
 		return
+	}
+
+	// 只审查推送到「默认分支」的提交；其它分支（feature/release 等）的 push 直接忽略，
+	// 避免每个分支推送都触发审查。PR/MR 事件不受此限制（合并前审查目标分支改动）。
+	if event.EventType == "push" {
+		defaultBranch := repo.DefaultBranch
+		if defaultBranch == "" {
+			defaultBranch = event.DefaultBranch
+		}
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		if event.TargetRef != defaultBranch {
+			c.JSON(http.StatusOK, gin.H{
+				"ok":      true,
+				"ignored": "non-default branch",
+				"branch":  event.TargetRef,
+				"default": defaultBranch,
+			})
+			return
+		}
 	}
 
 	// 创建审查记录
@@ -167,22 +188,24 @@ func reviewIdempotencyKey(repoID int64, sha, targetRef string) string {
 	return "review:" + strconv.FormatInt(repoID, 10) + ":" + sha + ":" + targetRef
 }
 
-// sameRepo 比较两个 clone URL 是否指向同一仓库（忽略协议、凭证、末尾 .git）。
-func sameRepo(configured, event string) bool {
-	norm := func(s string) string {
-		s = strings.TrimSpace(s)
-		if u, err := url.Parse(s); err == nil && u.Host != "" {
-			s = u.Host + u.Path
-		}
-		s = strings.TrimSuffix(s, ".git")
-		s = strings.TrimPrefix(s, "https://")
-		s = strings.TrimPrefix(s, "http://")
-		s = strings.TrimPrefix(s, "git@")
-		s = strings.ReplaceAll(s, ":", "/")
-		return strings.ToLower(strings.TrimSuffix(s, "/"))
-	}
-	a, b := norm(configured), norm(event)
+// SameRepo 比较两个 clone URL 是否指向同一仓库（忽略协议、凭证、末尾 .git）。
+func SameRepo(configured, event string) bool {
+	a, b := NormalizeCloneURL(configured), NormalizeCloneURL(event)
 	return a != "" && a == b
+}
+
+// NormalizeCloneURL 把 clone URL 归一化为 host/owner/repo（小写、去协议/凭证/.git）。
+func NormalizeCloneURL(s string) string {
+	s = strings.TrimSpace(s)
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		s = u.Host + u.Path
+	}
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "git@")
+	s = strings.ReplaceAll(s, ":", "/")
+	return strings.ToLower(strings.TrimSuffix(s, "/"))
 }
 
 func newPublicToken() (string, error) {

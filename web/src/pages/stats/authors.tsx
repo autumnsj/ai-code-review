@@ -93,8 +93,14 @@ export default function AuthorsStatsPage() {
           onRow={(r) => ({ onClick: () => setActive(r), style: { cursor: 'pointer' } })}
           columns={[
             {
-              title: '作者', dataIndex: 'author', width: 180,
-              render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span>,
+              title: '作者', dataIndex: 'author', width: 200,
+              render: (v: string, r: AuthorSummary) => (
+                <span>
+                  <span style={{ fontWeight: 600 }}>{r.display_name || v}</span>
+                  {r.display_name && <Typography.Text type="secondary" style={{ marginLeft: 6 }}>@{v}</Typography.Text>}
+                  {r.team && <Tag style={{ marginLeft: 6 }}>{r.team}</Tag>}
+                </span>
+              ),
             },
             { title: '审查次数', dataIndex: 'review_count', width: 100, sorter: (a, b) => a.review_count - b.review_count },
             {

@@ -2,6 +2,8 @@ import { http } from './client'
 
 export interface AuthorSummary {
   author: string
+  display_name: string
+  team: string
   review_count: number
   avg_total: number
   avg_arch: number

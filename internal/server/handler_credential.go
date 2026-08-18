@@ -14,14 +14,16 @@ import (
 )
 
 type credentialResp struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	PublicKey     string `json:"public_key,omitempty"`
-	Fingerprint   string `json:"fingerprint,omitempty"`
-	SecretSet     bool   `json:"secret_set"`
-	SecretMasked  string `json:"secret_masked,omitempty"`
-	CreatedAt     string `json:"created_at"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	PublicKey    string `json:"public_key,omitempty"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	APIBaseURL   string `json:"api_base_url,omitempty"`
+	SecretSet    bool   `json:"secret_set"`
+	SecretMasked string `json:"secret_masked,omitempty"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type credentialWithKeyResp struct {
@@ -37,6 +39,8 @@ func (s *Server) toCredentialResp(c *domain.Credential) credentialResp {
 		Type:        c.Type,
 		PublicKey:   c.PublicKey,
 		Fingerprint: c.Fingerprint,
+		Provider:    c.Provider,
+		APIBaseURL:  c.APIBaseURL,
 		CreatedAt:   c.CreatedAt.Format("2006-01-02 15:04"),
 	}
 	if c.Type == domain.CredentialHTTPSToken {
@@ -49,9 +53,11 @@ func (s *Server) toCredentialResp(c *domain.Credential) credentialResp {
 }
 
 type createCredentialReq struct {
-	Name   string `json:"name" binding:"required"`
-	Type   string `json:"type" binding:"required"`
-	Secret string `json:"secret"` // 粘贴的 SSH 私钥，或 HTTPS token
+	Name       string `json:"name" binding:"required"`
+	Type       string `json:"type" binding:"required"`
+	Secret     string `json:"secret"` // 粘贴的 SSH 私钥，或 HTTPS token
+	Provider   string `json:"provider"`
+	APIBaseURL string `json:"api_base_url"`
 }
 
 // POST /api/admin/credentials
@@ -102,6 +108,8 @@ func (s *Server) createCredential(c *gin.Context) {
 		}
 		in.Type = domain.CredentialHTTPSToken
 		in.Secret = req.Secret
+		in.Provider = strings.TrimSpace(req.Provider)
+		in.APIBaseURL = strings.TrimSpace(req.APIBaseURL)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type 必须为 ssh 或 https_token"})
 		return
@@ -131,8 +139,10 @@ func (s *Server) listCredentials(c *gin.Context) {
 }
 
 type updateCredentialReq struct {
-	Name   *string `json:"name"`
-	Secret *string `json:"secret"`
+	Name       *string `json:"name"`
+	Secret     *string `json:"secret"`
+	Provider   *string `json:"provider"`
+	APIBaseURL *string `json:"api_base_url"`
 }
 
 // PATCH /api/admin/credentials/:id
@@ -164,14 +174,22 @@ func (s *Server) updateCredential(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-		} else if err := s.store.UpdateCredential(c.Request.Context(), id, nil, req.Secret); err != nil {
+		} else if err := s.store.UpdateCredential(c.Request.Context(), id, nil, req.Secret, req.Provider, req.APIBaseURL); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+	} else {
+		// 未改密钥：仍需保存 provider / api_base_url（HTTPS 类型）。
+		if existing.Type == domain.CredentialHTTPSToken && (req.Provider != nil || req.APIBaseURL != nil) {
+			if err := s.store.UpdateCredential(c.Request.Context(), id, nil, nil, req.Provider, req.APIBaseURL); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 		}
 	}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
-		if err := s.store.UpdateCredential(c.Request.Context(), id, &name, nil); err != nil {
+		if err := s.store.UpdateCredential(c.Request.Context(), id, &name, nil, nil, nil); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

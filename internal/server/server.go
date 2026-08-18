@@ -38,10 +38,16 @@ type NotifierSettings interface {
 
 // StartReviewInput 手动触发审查的入参。
 type StartReviewInput struct {
+	// Mode: commit(默认,需 CommitSHA) | branch(用 Ref 分支名解析 HEAD) | repo(评审默认分支当前状态)。
+	Mode      string
 	CommitSHA string
 	BaseSHA   string
 	TargetRef string
 	SourceRef string
+	// Ref 为 branch 模式下的分支名。
+	Ref string
+	// Force 为 true 时，若该 commit/ref 已有审查记录，则重置并重新审查（复用同一行）。
+	Force bool
 }
 
 // ReviewStarter 手动触发审查（创建 review 记录并入队）。
@@ -73,6 +79,8 @@ type DashboardProvider interface {
 // AuthorSummary 作者统计行（对外 JSON）。
 type AuthorSummary struct {
 	Author        string  `json:"author"`
+	DisplayName   string  `json:"display_name"`
+	Team          string  `json:"team"`
 	ReviewCount   int64   `json:"review_count"`
 	AvgTotal      float64 `json:"avg_total"`
 	AvgArch       float64 `json:"avg_arch"`
@@ -141,6 +149,8 @@ func (s *Server) Router() *gin.Engine {
 		authed.PUT("/settings/server", s.updateServerSettings)
 		authed.GET("/settings/notifications", s.getNotifiers)
 		authed.PUT("/settings/notifications", s.updateNotifiers)
+		authed.GET("/settings/dimensions", s.getDimensions)
+		authed.PUT("/settings/dimensions", s.updateDimensions)
 
 		authed.GET("/repos", s.listRepos)
 		authed.POST("/repos", s.createRepo)
@@ -149,15 +159,27 @@ func (s *Server) Router() *gin.Engine {
 		authed.DELETE("/repos/:id", s.deleteRepo)
 		authed.POST("/repos/:id/reset-token", s.resetRepoToken)
 		authed.POST("/repos/:id/trigger", s.triggerRepoReview)
+		authed.POST("/repos/:id/webhook", s.registerRepoWebhook)
+		authed.POST("/webhooks/register-all", s.registerAllRepoWebhooks)
+		authed.POST("/import/preview", s.importPreview)
+		authed.POST("/import/commit", s.importCommit)
 
 		authed.GET("/credentials", s.listCredentials)
 		authed.POST("/credentials", s.createCredential)
 		authed.PATCH("/credentials/:id", s.updateCredential)
 		authed.DELETE("/credentials/:id", s.deleteCredential)
 
+		authed.GET("/members", s.listMembers)
+		authed.POST("/members", s.createMember)
+		authed.PATCH("/members/:id", s.updateMember)
+		authed.DELETE("/members/:id", s.deleteMember)
+		authed.GET("/unknown-members", s.unknownMembers)
+
 		authed.GET("/reviews", s.listReviews)
 		authed.GET("/reviews/:id", s.getReview)
 		authed.GET("/reviews/:id/findings", s.listFindings)
+		authed.GET("/reviews/:id/author-reports", s.listAuthorReports)
+		authed.GET("/reviews/:id/log", s.listReviewLogs)
 
 		authed.GET("/jobs", s.listJobs)
 		authed.POST("/jobs/:id/retry", s.retryJob)

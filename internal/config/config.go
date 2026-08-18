@@ -14,8 +14,8 @@ type Config struct {
 	AdminPassword     string
 	BaseURL           string
 	JWTSecret         string
-	DBDriver          string // 无头引导：sqlite | postgres（留空则首次启动走 Web 向导）
-	DBDSN             string // 无头引导：sqlite 文件路径或 postgres DSN（留空则 sqlite 用默认路径）
+	DBDriver          string // 无头引导：sqlite | postgres | mysql（留空则首次启动走 Web 向导）
+	DBDSN             string // 无头引导：sqlite 文件路径 / postgres DSN / mysql DSN（留空则 sqlite 用默认路径）
 	WorkerConcurrency int
 	LogLevel          string
 	PiAgentBin        string
@@ -40,8 +40,8 @@ func Load() (*Config, error) {
 	if cfg.AdminPassword == "" {
 		return nil, fmt.Errorf("AICR_ADMIN_PASSWORD 不能为空")
 	}
-	if cfg.DBDriver != "" && cfg.DBDriver != "sqlite" && cfg.DBDriver != "postgres" {
-		return nil, fmt.Errorf("AICR_DB_DRIVER 仅支持 sqlite 或 postgres，当前: %s", cfg.DBDriver)
+	if cfg.DBDriver != "" && cfg.DBDriver != "sqlite" && cfg.DBDriver != "postgres" && cfg.DBDriver != "mysql" {
+		return nil, fmt.Errorf("AICR_DB_DRIVER 仅支持 sqlite、postgres 或 mysql，当前: %s", cfg.DBDriver)
 	}
 	return cfg, nil
 }

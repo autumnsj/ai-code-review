@@ -5,7 +5,7 @@ import {
   Layout, Card, Descriptions, Table, Tag, Space, Typography, Empty, Spin, theme,
 } from 'antd'
 import dayjs from 'dayjs'
-import { reviewsApi, Finding } from '../../api/reviews'
+import { reviewsApi, Finding, dimensionRows } from '../../api/reviews'
 import ScoreRing from '../../components/ScoreRing'
 import SeverityTag from '../../components/SeverityTag'
 
@@ -47,12 +47,7 @@ export default function PublicReportPage() {
           <Space size={48} wrap>
             <ScoreRing score={review.score_total} label="综合评分" size={140} />
             <div>
-              {[
-                { label: '架构', score: review.score_arch },
-                { label: '质量', score: review.score_quality },
-                { label: '安全', score: review.score_security },
-                { label: '可维护性', score: review.score_maint },
-              ].map(d => (
+              {dimensionRows(review).map(d => (
                 <div key={d.label} style={{ marginBottom: 12, minWidth: 220 }}>
                   <Space style={{ justifyContent: 'space-between', width: '100%' }}>
                     <span>{d.label}</span><strong>{d.score}</strong>
@@ -65,11 +60,25 @@ export default function PublicReportPage() {
             </div>
             <Descriptions column={1} size="small">
               <Descriptions.Item label="仓库">{review.repo_name}</Descriptions.Item>
-              <Descriptions.Item label="Commit"><Text code>{review.commit_sha.slice(0, 12)}</Text></Descriptions.Item>
-              <Descriptions.Item label="作者">{review.author}</Descriptions.Item>
+              <Descriptions.Item label="分支">{review.target_ref || '-'}</Descriptions.Item>
+              <Descriptions.Item label="Commit 区间">
+                {review.base_sha
+                  ? <Text code>{review.base_sha.slice(0, 8)}..{review.commit_sha.slice(0, 8)}</Text>
+                  : <Text code>{review.commit_sha.slice(0, 12)}</Text>}
+                <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                  (head {review.commit_sha.slice(0, 8)}{review.base_sha ? `，base ${review.base_sha.slice(0, 8)}` : '，首次提交'})
+                </Typography.Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="作者">{review.author || '-'}</Descriptions.Item>
               {review.pr_title && <Descriptions.Item label="PR">{review.pr_title}</Descriptions.Item>}
               {stats && <Descriptions.Item label="变更">{stats.files_changed} 文件 / +{stats.additions} -{stats.deletions}</Descriptions.Item>}
-              <Descriptions.Item label="生成时间">{dayjs(review.finished_at || review.triggered_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+              <Descriptions.Item label="触发时间">{dayjs(review.triggered_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+              {review.started_at && (
+                <Descriptions.Item label="开始时间">{dayjs(review.started_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+              )}
+              <Descriptions.Item label="完成时间">
+                {review.finished_at ? dayjs(review.finished_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+              </Descriptions.Item>
             </Descriptions>
           </Space>
         </Card>

@@ -49,7 +49,9 @@ func (s *Scheduler) Enqueue(ctx context.Context, kind string, payload any, idemp
 	if err != nil {
 		return 0, err
 	}
-	id, err := s.store.EnqueueJob(ctx, kind, string(raw), idempotencyKey, 3)
+	// 审查任务不做失败重试：一次不成功就是 dead，由用户决定是否手动重跑。
+	// （worker 崩溃/部署重启导致租约过期的任务仍会被重新认领一次完成，但若再次失败同样直接 dead。）
+	id, err := s.store.EnqueueJob(ctx, kind, string(raw), idempotencyKey, 1)
 	if err == store.ErrDuplicate {
 		return 0, nil // 幂等：已有相同任务，不算错误
 	}

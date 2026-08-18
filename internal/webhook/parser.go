@@ -23,7 +23,7 @@ var ErrIgnoredEvent = errors.New("ignored event")
 
 // DefaultParsers 返回内置的平台解析器（顺序即匹配优先级）。
 func DefaultParsers() []Parser {
-	return []Parser{&githubParser{}, &gitlabParser{}, &giteeParser{}, &codingParser{}}
+	return []Parser{&giteaParser{}, &githubParser{}, &gitlabParser{}, &giteeParser{}, &codingParser{}}
 }
 
 // verifyHMACHex 校验 hex 编码的 HMAC（sha1 或 sha256），常量时间比较。

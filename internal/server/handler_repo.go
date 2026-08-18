@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/ai-code-review/aicr/internal/domain"
 	"github.com/ai-code-review/aicr/internal/store"
@@ -203,6 +206,153 @@ func (s *Server) resetRepoToken(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"hook_token": tok, "hook_url": s.baseURL + "/hooks/" + tok})
+}
+
+// webhookRegisterResult 单个仓库的注册结果。
+type webhookRegisterResult struct {
+	RepoID               int64  `json:"repo_id"`
+	RepoName             string `json:"repo_name"`
+	Created              bool   `json:"created"`
+	AlreadyExists        bool   `json:"already_exists"`
+	HookID               string `json:"hook_id,omitempty"`
+	HookURL              string `json:"hook_url,omitempty"`
+	DefaultBranch        string `json:"default_branch,omitempty"`         // 从平台同步到的默认分支
+	DefaultBranchChanged bool   `json:"default_branch_changed,omitempty"` // 是否回写更新了本地记录
+	Skipped              string `json:"skipped,omitempty"`                // 非空表示跳过原因（如未绑定凭据）
+	Error                string `json:"error,omitempty"`
+}
+
+// ensureRepoWebhook 为单个仓库幂等注册 push webhook；缺 secret 时自动生成并落库。
+// 同时从平台拉取仓库元数据，把真实的默认分支同步回本地（平台改过默认分支也能跟上）。
+func (s *Server) ensureRepoWebhook(ctx context.Context, repo *domain.Repo) webhookRegisterResult {
+	res := webhookRegisterResult{RepoID: repo.ID, RepoName: repo.Name, HookURL: s.baseURL + "/hooks/" + repo.HookToken}
+	if repo.CredentialID == 0 {
+		res.Skipped = "未绑定 HTTPS Token 凭据"
+		return res
+	}
+	client, err := s.buildPlatformClientFromCreds(ctx, string(repo.Provider), "", repo.CredentialID)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	// 1) 从平台同步默认分支（失败不阻断 webhook 注册）。
+	if info, err := client.GetRepo(ctx, repo.Name); err != nil {
+		s.log.Warn("同步仓库默认分支失败",
+			zap.String("repo", repo.Name), zap.Error(err))
+	} else if info.DefaultBranch != "" {
+		res.DefaultBranch = info.DefaultBranch
+		if info.DefaultBranch != repo.DefaultBranch {
+			branch := info.DefaultBranch
+			if err := s.store.UpdateRepo(ctx, repo.ID, nil, &branch, nil, nil, nil, nil); err != nil {
+				s.log.Warn("回写默认分支失败",
+					zap.String("repo", repo.Name), zap.Error(err))
+			} else {
+				res.DefaultBranchChanged = true
+				repo.DefaultBranch = info.DefaultBranch
+			}
+		}
+	}
+	// 2) 缺签名 secret 时自动生成并落库。
+	secret := repo.HookSecret
+	if secret == "" {
+		secret, err = newHookSecret()
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+		if err := s.store.UpdateRepo(ctx, repo.ID, nil, nil, nil, &secret, nil, nil); err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
+	// 3) 注册 push webhook；把默认分支作为平台侧分支过滤器（Gitea/GitLab 支持），
+	//    使非默认分支的 push 在平台侧就不发送，GitHub/Gitee 由服务端兜底过滤。
+	//    分支名不能为空（否则平台会退化为「所有分支」），取不到时保守回退 main。
+	branchFilter := repo.DefaultBranch
+	if branchFilter == "" {
+		branchFilter = "main"
+	}
+	created, hookID, err := client.EnsureWebhook(ctx, repo.Name, res.HookURL, secret, branchFilter)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.Created = created
+	res.AlreadyExists = !created
+	res.HookID = hookID
+	return res
+}
+
+// POST /api/admin/repos/:id/webhook  一键注册 push webhook（已存在同 URL 的 hook 则删旧重建，并同步默认分支）。
+func (s *Server) registerRepoWebhook(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	ctx := c.Request.Context()
+	repo, err := s.store.GetRepoByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "仓库不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	res := s.ensureRepoWebhook(ctx, repo)
+	if res.Skipped != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先为该仓库绑定 HTTPS Token 凭据（需 webhook 管理权限）"})
+		return
+	}
+	if res.Error != "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": res.Error})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// POST /api/admin/repos/webhook/register-all  为所有 active 且绑定了凭据的仓库批量注册 webhook。
+// 逐个幂等注册，部分失败不影响其它仓库；返回每个仓库的结果汇总。
+func (s *Server) registerAllRepoWebhooks(c *gin.Context) {
+	ctx := c.Request.Context()
+	repos, err := s.store.ListRepos(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	results := make([]webhookRegisterResult, 0, len(repos))
+	var created, existed, skipped, failed int
+	for _, repo := range repos {
+		if repo.Status == "disabled" {
+			continue
+		}
+		res := s.ensureRepoWebhook(ctx, repo)
+		switch {
+		case res.Skipped != "":
+			skipped++
+		case res.Error != "":
+			failed++
+		case res.Created:
+			created++
+		default:
+			existed++
+		}
+		results = append(results, res)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"total":   len(results),
+		"created": created,
+		"existed": existed,
+		"skipped": skipped,
+		"failed":  failed,
+		"items":   results,
+	})
+}
+
+// newHookSecret 生成 24 字节随机 hex，用作 webhook 签名密钥。
+func newHookSecret() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // DELETE /api/admin/repos/:id

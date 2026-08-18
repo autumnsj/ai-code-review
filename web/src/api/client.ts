@@ -15,7 +15,7 @@ http.interceptors.response.use(
     const status = error.response?.status
     if (status === 401) {
       localStorage.removeItem('token')
-      if (!location.pathname.startsWith('/login') && !location.pathname.startsWith('/reports/') && !location.pathname.startsWith('/setup')) {
+      if (!location.pathname.startsWith('/login') && !location.pathname.startsWith('/reports/') && !location.pathname.startsWith('/author-reports/') && !location.pathname.startsWith('/setup')) {
         location.href = '/login'
       }
     } else if (status === 503 && error.response?.data?.setup_required) {

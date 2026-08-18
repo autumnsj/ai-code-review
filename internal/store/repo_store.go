@@ -87,11 +87,20 @@ func (s *Store) ListRepos(ctx context.Context) ([]*domain.Repo, error) {
 }
 
 func (s *Store) UpdateRepo(ctx context.Context, id int64, name, defaultBranch, accessToken, hookSecret *string, credentialID *int64, status *string) error {
+	return s.UpdateRepoWithWebURL(ctx, id, name, defaultBranch, accessToken, hookSecret, credentialID, status, nil)
+}
+
+// UpdateRepoWithWebURL 与 UpdateRepo 相同，但额外允许刷新 web_url（从平台重新同步时使用）。
+func (s *Store) UpdateRepoWithWebURL(ctx context.Context, id int64, name, defaultBranch, accessToken, hookSecret *string, credentialID *int64, status *string, webURL *string) error {
 	q := "UPDATE repos SET updated_at=" + s.now()
 	args := []any{}
 	if name != nil {
 		q += ", name=?"
 		args = append(args, *name)
+	}
+	if webURL != nil {
+		q += ", web_url=?"
+		args = append(args, *webURL)
 	}
 	if defaultBranch != nil {
 		q += ", default_branch=?"

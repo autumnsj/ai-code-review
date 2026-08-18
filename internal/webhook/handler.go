@@ -104,6 +104,11 @@ func (h *Handler) handle(c *gin.Context) {
 		return
 	}
 
+	// 分支首次推送时各平台的 before 是 40 个 0（表示之前没有该 ref），全零不是真实
+	// 对象（空树 hash 为 4b825dc…），传给 git diff 会报 bad object。统一归一化为空，
+	// 由下游（analyzer/adapter）按"无 base"回退到父提交或空树。
+	event.BaseSHA = normalizeZeroSHA(event.BaseSHA)
+
 	// 校验来源仓库与配置一致（防止 token 泄露后被挪用于其它仓库）
 	if !SameRepo(repo.CloneURL, event.RepoURL) {
 		h.log.Warn("webhook repo mismatch",
@@ -192,6 +197,21 @@ func reviewIdempotencyKey(repoID int64, sha, targetRef string) string {
 func SameRepo(configured, event string) bool {
 	a, b := NormalizeCloneURL(configured), NormalizeCloneURL(event)
 	return a != "" && a == b
+}
+
+// normalizeZeroSHA 把全零（或纯 0）的 SHA 归一化为空字符串。Git 平台在分支首次
+// 推送时 before 字段为 40 个 0，它不是真实对象，需视为"无 base"交由下游回退处理。
+func normalizeZeroSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return ""
+	}
+	for _, r := range sha {
+		if r != '0' {
+			return sha
+		}
+	}
+	return ""
 }
 
 // NormalizeCloneURL 把 clone URL 归一化为 host/owner/repo（小写、去协议/凭证/.git）。

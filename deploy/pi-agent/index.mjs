@@ -382,7 +382,10 @@ function resolveLimits(input) {
 
 function diffForReview(src, input) {
   const head = input.commit_sha || git(src, ["rev-parse", "HEAD"]);
-  let base = input.base_sha || "";
+  // Git 平台在「分支首次推送」时 webhook 的 before 是 40 个 0（表示之前没有该 ref），
+  // 全零不是一个真实对象（空树 hash 是 4b825dc…），直接传给 git diff 会报 bad object。
+  // 这里把全零/空统一当作「无 base」，下方回退到父提交或空树。
+  let base = input.base_sha && !/^0+$/i.test(input.base_sha.trim()) ? input.base_sha.trim() : "";
   if (!base) {
     // 无 base 时取目标提交的第一父提交；首个提交则与空树比较。
     const parents = git(src, ["rev-list", "--parents", "-n", "1", head]).split(/\s+/);

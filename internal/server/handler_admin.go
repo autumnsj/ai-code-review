@@ -115,9 +115,11 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	if !auth.CheckPassword(cfg.AdminPasswordHash, req.Password) {
+		s.loginGuard.Fail(c.ClientIP())
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 		return
 	}
+	s.loginGuard.Success(c.ClientIP())
 	token, err := s.jwt.Issue("admin")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "签发 token 失败"})

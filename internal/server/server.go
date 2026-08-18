@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ai-code-review/aicr/internal/auth"
 	"github.com/ai-code-review/aicr/internal/domain"
@@ -14,6 +15,11 @@ import (
 	"github.com/ai-code-review/aicr/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+)
+
+const (
+	loginMaxFailures = 5
+	loginLockout     = 10 * time.Minute
 )
 
 type Server struct {
@@ -28,6 +34,7 @@ type Server struct {
 	jobs      JobAdmin
 	dash      DashboardProvider
 	stats     StatsProvider
+	loginGuard *middleware.LoginGuard
 }
 
 // NotifierSettings 通知配置读写接口。
@@ -118,7 +125,20 @@ type StatsProvider interface {
 }
 
 func New(st *store.Store, log *zap.Logger, webFS fs.FS, baseURL string, jwt *auth.Manager, wh *webhook.Handler, notif NotifierSettings, starter ReviewStarter, jobs JobAdmin, dash DashboardProvider, stats StatsProvider) *Server {
-	return &Server{store: st, log: log, webFS: webFS, baseURL: baseURL, jwt: jwt, webhook: wh, notifiers: notif, starter: starter, jobs: jobs, dash: dash, stats: stats}
+	return &Server{
+		store:      st,
+		log:        log,
+		webFS:      webFS,
+		baseURL:    baseURL,
+		jwt:        jwt,
+		webhook:    wh,
+		notifiers:  notif,
+		starter:    starter,
+		jobs:       jobs,
+		dash:       dash,
+		stats:      stats,
+		loginGuard: middleware.NewLoginGuard(loginMaxFailures, loginLockout),
+	}
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -141,7 +161,7 @@ func (s *Server) Router() *gin.Engine {
 
 	// 管理后台 API
 	admin := r.Group("/api/admin")
-	admin.POST("/login", s.login)
+	admin.POST("/login", s.loginGuard.Middleware(), s.login)
 
 	authed := admin.Group("")
 	authed.Use(middleware.JWTAuth(s.jwt))

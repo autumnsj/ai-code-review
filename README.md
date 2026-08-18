@@ -232,6 +232,7 @@ COMPOSE_DIR=/opt/aicr \
 - `GET /reviews`、`GET /reviews/:id`、`GET /reviews/:id/findings`
 - `GET /jobs`、`POST /jobs/:id/retry`
 - `GET /dashboard`
+- `GET /stats/leaderboard?days=30&repo_id=&limit=10` —— 多指标排行榜（代码量 churn/新增/删除/审查次数/问题数 + 综合及四维均分），各取 Top N 一次返回
 - `GET /stats/authors?days=30&repo_id=&sort=avg_score&page=1&page_size=50` —— 作者维度聚合（审查次数、四维均分、增删行合计、问题严重度计数）
 - `GET /stats/authors/:author?days=30&repo_id=` —— 单作者明细（维度均分 + 最近审查）
 
@@ -266,7 +267,7 @@ COMPOSE_DIR=/opt/aicr \
 | 领域模型 | `internal/domain/domain.go`（Repo / Credential / Review / Finding / Job / LLMConfig 等纯模型，无外部依赖） |
 | 首次初始化向导（后端） | `internal/bootstrap/bootstrap.go`（`$DATA_DIR/aicr.json` 读写）、`internal/store/bootstrap.go`（开库 / 建库 / 迁移）、`internal/store/probe.go`（连通性探测、PG 自动建库）、`internal/server/setup.go`（`/api/setup/*` 接口与完成回调） |
 | HTTP 服务 / 路由 | `internal/server/server.go`（Gin 引擎、路由注册、依赖接口）、`internal/server/dto.go`（请求/响应结构体） |
-| 管理端接口 | `internal/server/handler_admin.go`（登录、改密、LLM/服务/通知设置、模型列表拉取、`/settings/dimensions` 自定义打分维度）、`internal/server/handler_repo.go`（仓库 CRUD、重置 token、`POST /repos/:id/webhook` 单个 / `POST /webhooks/register-all` 全部仓库一键注册 push webhook：已存在同 URL 的 hook 则删旧重建、自动补签名 secret、**注册前从平台拉取并回写真实默认分支**、逐个返回结果汇总，`ensureRepoWebhook` 复用）、`internal/server/handler_ops.go`（手动触发审查：commit/branch/repo 模式、任务重试）、`internal/server/handler_review.go`（审查记录 / findings / `GET /reviews/:id/log` 实时进度日志）、`internal/server/handler_stats.go`（作者维度聚合）、`internal/server/handler_credential.go`（可复用凭据库，含 provider/api_base_url）、`internal/server/handler_import.go`（平台仓库扫描批量**同步**：预览 / 提交为 upsert 语义——已存在的仓库不跳过，用平台最新值更新默认分支/网页地址/凭据/secret，并复用 `ensureRepoWebhook` 同步默认分支 + 删旧重建 push webhook；导出 `buildPlatformClientFromCreds` 供批量 webhook 注册复用）、`internal/server/handler_member.go`（成员备注 CRUD、未备注账号发现）、`internal/server/handler_public.go`（健康检查、公开报告数据） |
+| 管理端接口 | `internal/server/handler_admin.go`（登录、改密、LLM/服务/通知设置、模型列表拉取、`/settings/dimensions` 自定义打分维度）、`internal/server/handler_repo.go`（仓库 CRUD、重置 token、`POST /repos/:id/webhook` 单个 / `POST /webhooks/register-all` 全部仓库一键注册 push webhook：已存在同 URL 的 hook 则删旧重建、自动补签名 secret、**注册前从平台拉取并回写真实默认分支**、逐个返回结果汇总，`ensureRepoWebhook` 复用）、`internal/server/handler_ops.go`（手动触发审查：commit/branch/repo 模式、任务重试）、`internal/server/handler_review.go`（审查记录 / findings / `GET /reviews/:id/log` 实时进度日志）、`internal/server/handler_stats.go`（作者维度聚合、`/stats/leaderboard` 多指标排行榜）、`internal/server/handler_credential.go`（可复用凭据库，含 provider/api_base_url）、`internal/server/handler_import.go`（平台仓库扫描批量**同步**：预览 / 提交为 upsert 语义——已存在的仓库不跳过，用平台最新值更新默认分支/网页地址/凭据/secret，并复用 `ensureRepoWebhook` 同步默认分支 + 删旧重建 push webhook；导出 `buildPlatformClientFromCreds` 供批量 webhook 注册复用）、`internal/server/handler_member.go`（成员备注 CRUD、未备注账号发现）、`internal/server/handler_public.go`（健康检查、公开报告数据） |
 | 平台仓库 API 客户端 | `internal/platform/platform.go`（`Client` 接口 `Me/ListRepos/GetRepo/ResolveCommit/EnsureWebhook`、`New` 工厂、`sameHookURL`；`GetRepo` 用于 webhook 注册时同步真实默认分支）、`http.go`（GET/POST/DELETE/分页工具）、`github.go` / `gitlab.go` / `gitee.go` / `gitea.go`（四家平台实现，自建实例自定义 base URL；`EnsureWebhook` 先 list 按 URL 删除所有旧 hook（含历史重复项）再 create，用最新 secret 重建；Gitea 传顶层 `branch_filter`、GitLab 传 `push_events_branch_filter`，在**支持的版本**平台侧即只推默认分支（Gitea 1.18.x 会静默忽略该字段，属尽力而为）；GitHub/Gitee 无此能力。非默认分支的**权威过滤在服务端**（`webhook/handler.go` 收到非默认分支 push 立即返回 `ignored` 不入队）；`GetRepo` 拉取单仓库元数据同步默认分支；Gitea `ListRepos` 以 `/repos/search` 为主来源（返回 token 可见的全部仓库，含挂在他人个人账号下、自己作为协作者的仓库——这是 `/user/repos` 与 `/orgs/{org}/repos` 都会漏掉的场景），再合并 `/user/repos?affiliation=...` 与各组织仓库作为旧版本兼容兜底，全部按 full_name 去重） |
 | 鉴权 / 限流 / 安全头中间件 | `internal/server/middleware/auth.go`（JWT）、`ratelimit.go`（IP 令牌桶）、`security.go`（安全响应头） |
 | 认证（密码 / JWT） | `internal/auth/auth.go`（bcrypt、HS256 JWT 签发与校验） |
@@ -291,7 +292,7 @@ COMPOSE_DIR=/opt/aicr \
 | 仓库管理 / 批量导入 | `pages/repos/index.tsx`、`pages/repos/detail.tsx`（手动触发 commit/branch/repo）、`pages/repos/ImportWizard.tsx`（平台扫描三步导入向导）、`api/repos.ts`（`importPreview`/`importCommit`/`trigger`/`registerWebhook`/`registerAllWebhooks`；仓库页「一键注册全部 Webhook」按钮，逐个回显新增/已存在/跳过/失败） |
 | 审查记录 / 报告 | `pages/reviews/index.tsx`、`pages/reviews/detail.tsx`（含 `ReviewLogPanel.tsx`：2s 增量轮询 `/reviews/:id/log`，终端样式实时展示 AI 进度，上滚暂停自动跟随；多作者审查展示「作者报告」表，各人评分/问题数/改动量与个人公开报告链接）、`pages/public/report.tsx`（整体免登录公开页）、`pages/public/authorReport.tsx`（按作者拆分的个人公开页 `/author-reports/:token`）、`api/reviews.ts`（`dimensionRows`、`AuthorReport`、`authorReports`/`publicAuthorGet`、`logs`/`ReviewLog`） |
 | 任务队列 | `pages/jobs/index.tsx`、`api/ops.ts` |
-| 作者维度看板 | `pages/stats/authors.tsx`（真名 / @login / 团队展示）、`api/stats.ts` |
+| 作者维度看板 | `pages/stats/authors.tsx`（真名 / @login / 团队展示）、`pages/stats/leaderboard.tsx`（单页多榜柱形图：代码量/审查次数/问题数 + 各维度评分，CSS 横向柱、奖牌排名，支持时间/仓库筛选）、`api/stats.ts`（`leaderboard`） |
 | 成员备注 | `pages/members/index.tsx`（CRUD + 未备注账号快捷添加）、`api/members.ts` |
 | 可复用凭据库 | `pages/credentials/index.tsx`（含所属平台 / API 地址字段）、`api/credentials.ts` |
 | 设置（AI 模型 / 通知 / 服务 / 安全 / 打分维度） | `pages/settings/index.tsx`（「打分维度」Tab，`Form.List` 自定义维度）、`api/settings.ts` |

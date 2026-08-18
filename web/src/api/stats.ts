@@ -13,6 +13,7 @@ export interface AuthorSummary {
   additions: number
   deletions: number
   files_changed: number
+  churn: number
   tokens_used: number
   findings_total: number
   critical: number
@@ -35,9 +36,14 @@ export interface AuthorDetail {
   }>
 }
 
+// LeaderboardBoards：key 为指标名，value 为该指标降序的 Top N 作者。
+export type LeaderboardBoards = Record<string, AuthorSummary[]>
+
 export const statsApi = {
   listAuthors: (params: { days?: number; repo_id?: number; sort?: string; page?: number; page_size?: number }) =>
     http.get<{ items: AuthorSummary[]; page: number; page_size: number }>('/api/admin/stats/authors', { params }).then(r => r.data),
+  leaderboard: (params: { days?: number; repo_id?: number; limit?: number }) =>
+    http.get<{ boards: LeaderboardBoards }>('/api/admin/stats/leaderboard', { params }).then(r => r.data.boards),
   getAuthor: (author: string, params: { days?: number; repo_id?: number }) =>
     http.get<AuthorDetail>(`/api/admin/stats/authors/${encodeURIComponent(author)}`, { params }).then(r => r.data),
 }

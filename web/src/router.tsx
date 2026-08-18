@@ -11,6 +11,7 @@ import ReviewsPage from './pages/reviews'
 import ReviewDetailPage from './pages/reviews/detail'
 import JobsPage from './pages/jobs'
 import AuthorsStatsPage from './pages/stats/authors'
+import LeaderboardPage from './pages/stats/leaderboard'
 import MembersPage from './pages/members'
 import SettingsPage from './pages/settings'
 import PublicReportPage from './pages/public/report'
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: 'reviews', element: <ReviewsPage /> },
       { path: 'reviews/:id', element: <ReviewDetailPage /> },
       { path: 'stats/authors', element: <AuthorsStatsPage /> },
+      { path: 'stats/leaderboard', element: <LeaderboardPage /> },
       { path: 'members', element: <MembersPage /> },
       { path: 'jobs', element: <JobsPage /> },
       { path: 'settings', element: <SettingsPage /> },

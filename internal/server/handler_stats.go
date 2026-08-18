@@ -32,6 +32,26 @@ func (s *Server) listAuthorStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "page": page, "page_size": pageSize})
 }
 
+// GET /api/admin/stats/leaderboard?days=&repo_id=&limit=
+func (s *Server) leaderboard(c *gin.Context) {
+	if s.stats == nil {
+		c.JSON(http.StatusOK, gin.H{"boards": gin.H{}})
+		return
+	}
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+	repoID, _ := strconv.ParseInt(c.Query("repo_id"), 10, 64)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+	boards, err := s.stats.Leaderboard(c.Request.Context(), days, repoID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"boards": boards})
+}
+
 // GET /api/admin/stats/authors/:author?days=&repo_id=
 func (s *Server) getAuthorStats(c *gin.Context) {
 	if s.stats == nil {

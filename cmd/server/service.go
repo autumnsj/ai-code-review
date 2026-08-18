@@ -216,6 +216,35 @@ func (s *adminService) ListAuthors(ctx context.Context, days int, repoID int64, 
 	return out, nil
 }
 
+// leaderboardMetrics 是排行榜页面展示的指标及其排序 key。
+// 代码量类取「最多」、评分类取「最高」，均为降序，语义自洽。
+var leaderboardMetrics = []string{
+	"churn", "additions", "deletions", "review_count", "findings_total",
+	"avg_total", "avg_arch", "avg_quality", "avg_security", "avg_maint",
+}
+
+// Leaderboard 一次性返回各指标的 Top N 作者。
+func (s *adminService) Leaderboard(ctx context.Context, days int, repoID int64, limit int) (map[string][]server.AuthorSummary, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	out := make(map[string][]server.AuthorSummary, len(leaderboardMetrics))
+	for _, m := range leaderboardMetrics {
+		rows, err := s.store.ListAuthorStats(ctx, store.AuthorFilter{
+			Days: days, RepoID: repoID, Sort: m, Limit: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items := make([]server.AuthorSummary, 0, len(rows))
+		for _, a := range rows {
+			items = append(items, toAuthorSummary(a))
+		}
+		out[m] = items
+	}
+	return out, nil
+}
+
 // GetAuthor 返回单个作者的统计明细及最近审查。
 func (s *adminService) GetAuthor(ctx context.Context, author string, days int, repoID int64) (*server.AuthorDetail, error) {
 	a, err := s.store.GetAuthorStats(ctx, store.AuthorFilter{
@@ -266,6 +295,7 @@ func toAuthorSummary(a *store.AuthorStats) server.AuthorSummary {
 		Additions:     a.Additions,
 		Deletions:     a.Deletions,
 		FilesChanged:  a.FilesChanged,
+		Churn:         a.Churn,
 		TokensUsed:    a.TokensUsed,
 		FindingsTotal: a.FindingsTotal,
 		Critical:      a.Critical,

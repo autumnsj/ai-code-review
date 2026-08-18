@@ -61,6 +61,8 @@ type AuthorStats struct {
 	Additions     int64     `json:"additions"`
 	Deletions     int64     `json:"deletions"`
 	FilesChanged  int64     `json:"files_changed"`
+	// Churn 是总代码变动量（新增+删除），用于代码量排行。
+	Churn         int64     `json:"churn"`
 	TokensUsed    int64     `json:"tokens_used"`
 	FindingsTotal int64     `json:"findings_total"`
 	Critical      int64     `json:"critical"`
@@ -77,15 +79,21 @@ type AuthorFilter struct {
 	RepoID      int64  // 0 表示全部
 	Author      string // 模糊匹配；AuthorExact 非空时精确匹配
 	AuthorExact string
-	Sort        string // avg_score|additions|deletions|review_count|findings
+	Sort        string // avg_score|additions|deletions|churn|review_count|findings
 	Limit       int
 	Offset      int
 }
 
 var authorSortColumns = map[string]string{
 	"avg_score":    "avg_total",
+	"avg_total":    "avg_total",
+	"avg_arch":     "avg_arch",
+	"avg_quality":  "avg_quality",
+	"avg_security": "avg_security",
+	"avg_maint":    "avg_maint",
 	"additions":    "additions",
 	"deletions":    "deletions",
+	"churn":        "churn",
 	"review_count": "review_count",
 	"findings":     "findings_total",
 }
@@ -106,6 +114,7 @@ const authorSelect = `
 		COALESCE(AVG(rar.score_maint),0)                 AS avg_maint,
 		COALESCE(SUM(rar.additions),0)                   AS additions,
 		COALESCE(SUM(rar.deletions),0)                   AS deletions,
+		COALESCE(SUM(rar.additions),0)+COALESCE(SUM(rar.deletions),0) AS churn,
 		COALESCE(SUM(rar.files_changed),0)               AS files_changed,
 		0                                                AS tokens_used,
 		COALESCE(SUM(rar.findings_count),0)              AS findings_total,
@@ -188,7 +197,7 @@ func scanAuthorStats(scan func(...any) error) (*AuthorStats, error) {
 	err := scan(
 		&a.Author, &a.DisplayName, &a.Team, &a.ReviewCount,
 		&a.AvgTotal, &a.AvgArch, &a.AvgQuality, &a.AvgSecurity, &a.AvgMaint,
-		&a.Additions, &a.Deletions, &a.FilesChanged, &a.TokensUsed,
+		&a.Additions, &a.Deletions, &a.Churn, &a.FilesChanged, &a.TokensUsed,
 		&a.FindingsTotal, &a.Critical, &a.High, &a.Medium, &a.Low, &a.Info,
 		&last,
 	)

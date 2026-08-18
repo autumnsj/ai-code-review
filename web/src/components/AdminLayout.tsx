@@ -10,6 +10,7 @@ import {
   UnorderedListOutlined,
   SettingOutlined,
   LogoutOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = Layout
@@ -19,7 +20,13 @@ const items = [
   { key: '/admin/repos', icon: <BranchesOutlined />, label: <Link to="/admin/repos">仓库</Link> },
   { key: '/admin/credentials', icon: <KeyOutlined />, label: <Link to="/admin/credentials">凭据</Link> },
   { key: '/admin/reviews', icon: <AuditOutlined />, label: <Link to="/admin/reviews">审查记录</Link> },
-  { key: '/admin/stats', icon: <TeamOutlined />, label: <Link to="/admin/stats/authors">作者排行</Link> },
+  {
+    key: '/admin/stats', icon: <BarChartOutlined />, label: '统计',
+    children: [
+      { key: '/admin/stats/leaderboard', label: <Link to="/admin/stats/leaderboard">排行榜</Link> },
+      { key: '/admin/stats/authors', label: <Link to="/admin/stats/authors">作者明细</Link> },
+    ],
+  },
   { key: '/admin/members', icon: <TeamOutlined />, label: <Link to="/admin/members">成员备注</Link> },
   { key: '/admin/jobs', icon: <UnorderedListOutlined />, label: <Link to="/admin/jobs">任务队列</Link> },
   { key: '/admin/settings', icon: <SettingOutlined />, label: <Link to="/admin/settings">设置</Link> },
@@ -29,7 +36,9 @@ export default function AdminLayout() {
   const loc = useLocation()
   const nav = useNavigate()
   const { token } = theme.useToken()
-  const selectedKey = '/' + loc.pathname.split('/').slice(1, 3).join('/')
+  // 统计有子菜单，用完整路径精确高亮叶子；其它（仓库/审查记录等详情页）取前两级高亮父项。
+  const path = loc.pathname.replace(/\/$/, '')
+  const selectedKey = path.startsWith('/admin/stats') ? path : '/' + path.split('/').slice(1, 3).join('/')
 
   const logout = () => {
     localStorage.removeItem('token')

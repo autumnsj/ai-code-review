@@ -90,6 +90,7 @@ type AuthorSummary struct {
 	Additions     int64   `json:"additions"`
 	Deletions     int64   `json:"deletions"`
 	FilesChanged  int64   `json:"files_changed"`
+	Churn         int64   `json:"churn"`
 	TokensUsed    int64   `json:"tokens_used"`
 	FindingsTotal int64   `json:"findings_total"`
 	Critical      int64   `json:"critical"`
@@ -109,6 +110,10 @@ type AuthorDetail struct {
 // StatsProvider 提供作者维度统计。
 type StatsProvider interface {
 	ListAuthors(ctx context.Context, days int, repoID int64, sort string, limit, offset int) ([]AuthorSummary, error)
+	// Leaderboard 一次性返回多个指标各取 Top N 的作者排行，用于排行榜页面。
+	// 返回 key 为指标名（churn/additions/deletions/review_count/findings/
+	// avg_total/avg_arch/avg_quality/avg_security/avg_maint），value 为该指标降序的作者列表。
+	Leaderboard(ctx context.Context, days int, repoID int64, limit int) (map[string][]AuthorSummary, error)
 	GetAuthor(ctx context.Context, author string, days int, repoID int64) (*AuthorDetail, error)
 }
 
@@ -189,6 +194,7 @@ func (s *Server) Router() *gin.Engine {
 		authed.GET("/dashboard", s.getDashboard)
 
 		authed.GET("/stats/authors", s.listAuthorStats)
+		authed.GET("/stats/leaderboard", s.leaderboard)
 		authed.GET("/stats/authors/:author", s.getAuthorStats)
 	}
 

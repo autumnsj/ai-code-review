@@ -37,7 +37,7 @@ func (c *giteaClient) Me(ctx context.Context) (string, error) {
 	return u.Login, nil
 }
 
-// giteaRepo 是 Gitea /repos、/user/repos、/orgs/{org}/repos 共用的仓库字段子集。
+// giteaRepo 是 Gitea 各仓库列表接口共用的字段子集。
 type giteaRepo struct {
 	FullName string `json:"full_name"`
 	CloneURL string `json:"clone_url"`
@@ -46,23 +46,7 @@ type giteaRepo struct {
 	Private  bool   `json:"private"`
 }
 
-// fetchRepoPage 拉取一页仓库列表（Gitea 单页 limit 上限 50）。
-func (c *giteaClient) fetchRepoPage(ctx context.Context, endpoint string, page int) ([]giteaRepo, error) {
-	u := setQuery(c.base+endpoint, map[string]string{
-		"limit": "50", "page": itoa(page),
-	})
-	body, err := httpGet(ctx, u, c.header)
-	if err != nil {
-		return nil, err
-	}
-	var repos []giteaRepo
-	if err := decodeJSON(body, &repos); err != nil {
-		return nil, err
-	}
-	return repos, nil
-}
-
-// appendRepos 把仓库追加到 out，按 full_name 去重。
+// appendGiteaRepos 把仓库追加到 out，按 full_name 去重。
 func appendGiteaRepos(out *[]RepoInfo, seen map[string]bool, repos []giteaRepo) {
 	for _, r := range repos {
 		if r.FullName == "" || seen[r.FullName] {
@@ -76,21 +60,15 @@ func appendGiteaRepos(out *[]RepoInfo, seen map[string]bool, repos []giteaRepo) 
 	}
 }
 
-func (c *giteaClient) ListRepos(ctx context.Context) ([]RepoInfo, error) {
-	if c.base == "" {
-		return nil, fmt.Errorf("Gitea 需要填写 API 地址（自建实例）")
-	}
-	var out []RepoInfo
-	seen := make(map[string]bool)
-
-	// 1) 个人仓库 + 协作者仓库 + 组织成员仓库（显式带 affiliation=organization_member，
-	//    Gitea /user/repos 默认不返回通过团队授权的组织仓库）。
+// listReposPaged 逐页拉取「直接返回数组」的 Gitea 仓库列表接口（单页 50）。
+func (c *giteaClient) listReposPaged(ctx context.Context, endpoint string, extra map[string]string) ([]giteaRepo, error) {
+	var all []giteaRepo
 	for page := 1; page <= 50; page++ {
-		u := setQuery(c.base+"/api/v1/user/repos", map[string]string{
-			"limit": "50", "page": itoa(page),
-			"affiliation": "owner,collaborator,organization_member",
-		})
-		body, err := httpGet(ctx, u, c.header)
+		q := map[string]string{"limit": "50", "page": itoa(page)}
+		for k, v := range extra {
+			q[k] = v
+		}
+		body, err := httpGet(ctx, setQuery(c.base+endpoint, q), c.header)
 		if err != nil {
 			return nil, err
 		}
@@ -98,42 +76,72 @@ func (c *giteaClient) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 		if err := decodeJSON(body, &repos); err != nil {
 			return nil, err
 		}
-		appendGiteaRepos(&out, seen, repos)
+		all = append(all, repos...)
 		if len(repos) < 50 {
 			break
 		}
 	}
+	return all, nil
+}
 
-	// 2) 组织仓库：Gitea 的 /user/repos 不保证返回所有通过团队(team)授权的组织仓库，
-	// 逐个拉取用户所属组织的仓库列表补齐（按 full_name 去重）。
-	body, err := httpGet(ctx, c.base+"/api/v1/user/orgs", c.header)
-	if err != nil {
-		// 组织列表是「补齐」用途，不可得时不阻断个人仓库结果。
-		return out, nil
+func (c *giteaClient) ListRepos(ctx context.Context) ([]RepoInfo, error) {
+	if c.base == "" {
+		return nil, fmt.Errorf("Gitea 需要填写 API 地址（自建实例）")
 	}
-	var orgs []struct {
-		UserName string `json:"username"`
-	}
-	if err := decodeJSON(body, &orgs); err != nil {
-		return out, nil
-	}
-	for _, org := range orgs {
-		if org.UserName == "" {
-			continue
+	var out []RepoInfo
+	seen := make(map[string]bool)
+
+	// 主来源：/repos/search。它返回 token 可见的「全部」仓库，包括：
+	//   - 自己拥有的、组织/团队授权的；
+	//   - 自己作为协作者、但仓库挂在「他人个人账号」下的（这正是 /user/repos 和
+	//     /orgs/{org}/repos 都会漏掉的情况，实测会少 2 个仓库）。
+	// 响应是 {ok,data:[...]} 包装，按 page 分页、单页 50。
+	for page := 1; page <= 50; page++ {
+		u := setQuery(c.base+"/api/v1/repos/search", map[string]string{
+			"limit": "50", "page": itoa(page),
+		})
+		body, err := httpGet(ctx, u, c.header)
+		if err != nil {
+			// 旧版 Gitea 可能不支持 search，失败时降级走下面的 user/org 列表。
+			break
 		}
-		endpoint := "/api/v1/orgs/" + url.PathEscape(org.UserName) + "/repos"
-		for page := 1; page <= 50; page++ {
-			repos, err := c.fetchRepoPage(ctx, endpoint, page)
-			if err != nil {
-				// 单个组织无权限/不可达时跳过，继续其它组织。
-				break
-			}
-			appendGiteaRepos(&out, seen, repos)
-			if len(repos) < 50 {
-				break
+		var resp struct {
+			Data []giteaRepo `json:"data"`
+		}
+		if err := decodeJSON(body, &resp); err != nil {
+			break
+		}
+		appendGiteaRepos(&out, seen, resp.Data)
+		if len(resp.Data) < 50 {
+			break
+		}
+	}
+
+	// 兜底/兼容：再合并 /user/repos（带 affiliation）与各组织仓库，确保旧版本/被禁用搜索
+	// 时也能覆盖；appendGiteaRepos 按 full_name 去重，重复无副作用。
+	if repos, err := c.listReposPaged(ctx, "/api/v1/user/repos", map[string]string{
+		"affiliation": "owner,collaborator,organization_member",
+	}); err == nil {
+		appendGiteaRepos(&out, seen, repos)
+	}
+
+	if body, err := httpGet(ctx, c.base+"/api/v1/user/orgs", c.header); err == nil {
+		var orgs []struct {
+			UserName string `json:"username"`
+		}
+		if err := decodeJSON(body, &orgs); err == nil {
+			for _, org := range orgs {
+				if org.UserName == "" {
+					continue
+				}
+				endpoint := "/api/v1/orgs/" + url.PathEscape(org.UserName) + "/repos"
+				if repos, err := c.listReposPaged(ctx, endpoint, nil); err == nil {
+					appendGiteaRepos(&out, seen, repos)
+				}
 			}
 		}
 	}
+
 	return out, nil
 }
 

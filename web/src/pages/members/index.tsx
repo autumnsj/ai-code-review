@@ -120,12 +120,18 @@ function MemberModal({
   const { message } = App.useApp()
   const [form] = Form.useForm()
 
-  // form 实例常驻本组件，Form 随弹窗重挂载时 rc-field-form 会保留旧 store 值
-  // （旧值优先于新 initialValues），每次打开时显式重置，保证预填/回填正确。
+  // 打开时把目标值直接写进常驻 form 实例的 store。注意时序：destroyOnClose 的弹窗
+  // 内容在 open 翻转后才挂载，Form 挂载时 rc-field-form 的合并规则是「旧 store 优先于
+  // 新 initialValues」——若靠 initialValues 或 resetFields 初始化，显示的会是上一次的
+  // 账号（要点两次才对，还会把备注存到错误账号上）。Form 未挂载时 setFieldsValue
+  // 同样写入 store，字段一挂载就读到正确值。
   useEffect(() => {
-    if (open) {
-      form.resetFields()
-    }
+    if (!open) return
+    form.setFieldsValue(
+      editing
+        ? { ...editing }
+        : { git_login: prefillLogin ?? '', display_name: undefined, team: undefined, note: undefined, active: true },
+    )
   }, [open, editing, prefillLogin, form])
 
   const create = useMutation({ mutationFn: memberApi.create })

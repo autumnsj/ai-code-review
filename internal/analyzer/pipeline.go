@@ -333,9 +333,10 @@ func (p *Pipeline) persist(ctx context.Context, reviewID int64, specs []domain.D
 
 	// 作者归属：用被审 commit 的 git 作者覆盖创建时写入的 pusher/触发者。
 	// 以 email 作为稳定唯一键（便于按人聚合与成员备注映射），email 缺失回退 name。
-	author := strings.TrimSpace(r.CommitAuthor.Email)
+	// 统一小写：participants/findings 的归属键都已小写，JOIN 成员备注时大小写不一致会漏匹配。
+	author := strings.ToLower(strings.TrimSpace(r.CommitAuthor.Email))
 	if author == "" {
-		author = strings.TrimSpace(r.CommitAuthor.Name)
+		author = strings.ToLower(strings.TrimSpace(r.CommitAuthor.Name))
 	}
 
 	// 旧四维列在命中默认维度时回填，保持既有统计/UI 兼容。

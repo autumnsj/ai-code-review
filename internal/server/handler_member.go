@@ -44,7 +44,8 @@ func (s *Server) createMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	login := strings.TrimSpace(req.GitLogin)
+	// 归一化为小写：reviews.author/作者报告的归属键都是小写 email，JOIN 时大小写不一致会漏匹配。
+	login := strings.ToLower(strings.TrimSpace(req.GitLogin))
 	if login == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "git_login 不能为空"})
 		return

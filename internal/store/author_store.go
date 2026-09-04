@@ -126,7 +126,7 @@ const authorSelect = `
 		MAX(rv.finished_at)                              AS last_reviewed
 	FROM review_author_reports rar
 	JOIN reviews rv ON rv.id = rar.review_id
-	LEFT JOIN authors a ON a.git_login = rar.author
+	LEFT JOIN authors a ON LOWER(a.git_login) = LOWER(rar.author)
 	WHERE rv.status='succeeded' AND rar.author<>''`
 
 // ListAuthorStats 按作者聚合统计。

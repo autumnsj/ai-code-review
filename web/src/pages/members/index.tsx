@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   App, Button, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, Alert,
 } from 'antd'
@@ -120,6 +120,14 @@ function MemberModal({
   const { message } = App.useApp()
   const [form] = Form.useForm()
 
+  // form 实例常驻本组件，Form 随弹窗重挂载时 rc-field-form 会保留旧 store 值
+  // （旧值优先于新 initialValues），每次打开时显式重置，保证预填/回填正确。
+  useEffect(() => {
+    if (open) {
+      form.resetFields()
+    }
+  }, [open, editing, prefillLogin, form])
+
   const create = useMutation({ mutationFn: memberApi.create })
   const update = useMutation({ mutationFn: (v: { id: number; body: any }) => memberApi.update(v.id, v.body) })
 
@@ -162,9 +170,11 @@ function MemberModal({
       onOk={onOk}
       confirmLoading={create.isPending || update.isPending}
       destroyOnClose
-      forceRender
     >
       <Form
+        // key 随目标变化强制重挂载：forceRender 会让表单在页面加载时即以空值挂载，
+        // initialValues 之后不再生效（点未备注标签预填不进去），重挂载保证初始值正确。
+        key={editing ? `edit-${editing.id}` : `create-${prefillLogin ?? ''}`}
         form={form}
         layout="vertical"
         initialValues={

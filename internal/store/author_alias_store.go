@@ -59,8 +59,10 @@ func (s *Store) ListAuthors(ctx context.Context) ([]*domain.Author, error) {
 }
 
 // GetAuthorByLogin 按 git_login 查询；不存在返回 ErrNotFound。
+// 比较双方都归一为小写，兼容历史上手工录入时大小写不一致的备注。
 func (s *Store) GetAuthorByLogin(ctx context.Context, login string) (*domain.Author, error) {
-	row := s.db.QueryRowContext(ctx, s.rebind(`SELECT `+authorColumns+` FROM authors WHERE git_login=?`), login)
+	row := s.db.QueryRowContext(ctx, s.rebind(`SELECT `+authorColumns+` FROM authors WHERE LOWER(git_login)=?`),
+		strings.ToLower(strings.TrimSpace(login)))
 	a, err := scanAuthor(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -135,10 +137,10 @@ func (s *Store) DeleteAuthor(ctx context.Context, id int64) error {
 // ListUnknownLogins 返回审查记录中出现、但未在 authors 表中备注的 git_login。
 func (s *Store) ListUnknownLogins(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT rv.author FROM reviews rv
-		LEFT JOIN authors a ON a.git_login = rv.author
+		SELECT DISTINCT LOWER(rv.author) FROM reviews rv
+		LEFT JOIN authors a ON LOWER(a.git_login) = LOWER(rv.author)
 		WHERE rv.author<>'' AND a.git_login IS NULL
-		ORDER BY rv.author`)
+		ORDER BY 1`)
 	if err != nil {
 		return nil, err
 	}

@@ -71,8 +71,29 @@ func postJSON(ctx context.Context, client *http.Client, url string, payload any)
 	return nil
 }
 
-// BuildMarkdown 生成审查通知的 markdown 内容。
-func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL string) string {
+// formatAuthor 组合通知里展示的作者名：有成员备注时显示「真实姓名（账号）」，
+// 否则回退「git 提交名 <账号>」，再退裸账号。
+func formatAuthor(account, gitName, memberName string) string {
+	account = strings.TrimSpace(account)
+	memberName = strings.TrimSpace(memberName)
+	if memberName != "" {
+		if account != "" {
+			return fmt.Sprintf("%s（%s）", memberName, account)
+		}
+		return memberName
+	}
+	gitName = strings.TrimSpace(gitName)
+	if gitName != "" && account != "" {
+		return fmt.Sprintf("%s <%s>", gitName, account)
+	}
+	if gitName != "" {
+		return gitName
+	}
+	return account
+}
+
+// BuildMarkdown 生成审查通知的 markdown 内容。memberName 为成员备注的真实姓名（可为空）。
+func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL, memberName string) string {
 	status := "✅ 审查完成"
 	if r.Status == "failed" {
 		status = "❌ 审查失败"
@@ -84,7 +105,7 @@ func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL strin
 		md += fmt.Sprintf("**PR**：%s\n", r.PRTitle)
 	}
 	md += fmt.Sprintf("**Commit**：`%s`\n", shortSHA(r.CommitSHA))
-	md += fmt.Sprintf("**作者**：%s\n", r.Author)
+	md += fmt.Sprintf("**作者**：%s\n", formatAuthor(r.Author, "", memberName))
 	if r.Status == "succeeded" {
 		md += fmt.Sprintf("**综合评分**：<font color=\"%s\">**%s**</font>\n", scoreColor(r.ScoreTotal), score)
 		if len(r.ScoreDimensions) > 0 {
@@ -125,20 +146,15 @@ func BuildMarkdown(r *domain.Review, findings []*domain.Finding, reportURL strin
 }
 
 // BuildAuthorMarkdown 生成按作者拆分的审查通知 markdown（每位参与者一条）。
-func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findings []*domain.Finding, reportURL string) string {
-	display := ar.AuthorName
-	if display != "" && ar.Author != "" {
-		display = fmt.Sprintf("%s <%s>", ar.AuthorName, ar.Author)
-	} else if ar.Author != "" {
-		display = ar.Author
-	}
+// memberName 为成员备注的真实姓名（可为空）。
+func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findings []*domain.Finding, reportURL, memberName string) string {
 	md := "## ✅ 代码审查报告\n"
 	md += fmt.Sprintf("**仓库**：[%s](%s)\n", r.RepoName, reportURL)
 	if r.PRTitle != "" {
 		md += fmt.Sprintf("**PR**：%s\n", r.PRTitle)
 	}
 	md += fmt.Sprintf("**Commit**：`%s`\n", shortSHA(r.CommitSHA))
-	md += fmt.Sprintf("**提交者**：%s\n", display)
+	md += fmt.Sprintf("**提交者**：%s\n", formatAuthor(ar.Author, ar.AuthorName, memberName))
 	md += fmt.Sprintf("**你的评分**：<font color=\"%s\">**%d**</font>\n", scoreColor(ar.ScoreTotal), ar.ScoreTotal)
 	if len(ar.ScoreDimensions) > 0 {
 		keys := make([]string, 0, len(ar.ScoreDimensions))

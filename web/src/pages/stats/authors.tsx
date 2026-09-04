@@ -97,7 +97,7 @@ export default function AuthorsStatsPage() {
               render: (v: string, r: AuthorSummary) => (
                 <span>
                   <span style={{ fontWeight: 600 }}>{r.display_name || v}</span>
-                  {r.display_name && <Typography.Text type="secondary" style={{ marginLeft: 6 }}>@{v}</Typography.Text>}
+                  {r.display_name && <Typography.Text type="secondary" style={{ marginLeft: 6 }}>（{v}）</Typography.Text>}
                   {r.team && <Tag style={{ marginLeft: 6 }}>{r.team}</Tag>}
                 </span>
               ),

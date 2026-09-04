@@ -49,8 +49,15 @@ const SCORE_METRICS: MetricDef[] = [
   { key: 'avg_maint', label: '可维护', value: (a) => a.avg_maint, format: (v) => v.toFixed(1), color: '#1677ff', isScore: true },
 ]
 
-function displayName(a: AuthorSummary) {
-  return a.display_name || a.author
+// 有备注时显示「真名（账号）」，无备注显示裸账号（账号是小写 email/登录名）。
+function renderAuthor(a: AuthorSummary) {
+  if (!a.display_name) return a.author
+  return (
+    <>
+      {a.display_name}
+      <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>（{a.author}）</Text>
+    </>
+  )
 }
 
 function BarRow({ a, rank, max, metric }: { a: AuthorSummary; rank: number; max: number; metric: MetricDef }) {
@@ -66,9 +73,9 @@ function BarRow({ a, rank, max, metric }: { a: AuthorSummary; rank: number; max:
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 12, fontWeight: 700,
       }}>{rank}</div>
-      <Tooltip title={a.display_name ? `${a.display_name} @${a.author}` : a.author}>
-        <div style={{ width: 130, flex: '0 0 130', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-          {displayName(a)}
+      <Tooltip title={a.display_name ? `${a.display_name}（${a.author}）` : a.author}>
+        <div style={{ width: 150, flex: '0 0 150', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
+          {renderAuthor(a)}
           {a.team && <Tag style={{ marginLeft: 4, fontSize: 11 }}>{a.team}</Tag>}
         </div>
       </Tooltip>

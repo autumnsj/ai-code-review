@@ -2,6 +2,8 @@ package notifier
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -41,7 +43,7 @@ func (d *Dispatcher) NotifyReview(ctx context.Context, r *domain.Review, finding
 		return
 	}
 	reportURL := d.baseURL + "/reports/" + r.PublicToken
-	md := BuildMarkdown(r, findings, reportURL)
+	md := BuildMarkdown(r, findings, reportURL, d.memberName(ctx, r.Author))
 	title := "代码审查报告 - " + r.RepoName
 
 	for _, ch := range chs {
@@ -97,10 +99,27 @@ func (d *Dispatcher) NotifyAuthorReview(ctx context.Context, r *domain.Review) {
 			d.log.Warn("notify: load author findings", zap.String("author", ar.Author), zap.Error(ferr))
 		}
 		reportURL := d.baseURL + "/author-reports/" + ar.PublicToken
-		md := BuildAuthorMarkdown(r, ar, findings, reportURL)
+		md := BuildAuthorMarkdown(r, ar, findings, reportURL, d.memberName(ctx, ar.Author))
 		title := "代码审查报告 - " + r.RepoName
 		d.sendToChannels(ctx, enabled, title, md)
 	}
+}
+
+// memberName 按作者归属键（小写 email/登录名）查成员备注的真实姓名；
+// 没备注或查询失败返回空，通知回退显示 git 提交名/账号。
+func (d *Dispatcher) memberName(ctx context.Context, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	a, err := d.store.GetAuthorByLogin(ctx, key)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			d.log.Warn("notify: load member note", zap.String("author", key), zap.Error(err))
+		}
+		return ""
+	}
+	return strings.TrimSpace(a.DisplayName)
 }
 
 func (d *Dispatcher) sendToChannels(ctx context.Context, chs []Channel, title, md string) {

@@ -21,6 +21,8 @@ CONTAINER="${CONTAINER:-aicr}"                    # 健康轮询的容器名
 GOARCH_VAL="${GOARCH:-amd64}"                     # 交叉编译目标架构
 GOOS_VAL="${GOOS:-linux}"
 BINARY_NAME="aicr-linux-${GOARCH_VAL}"
+# 远程 docker build 用的 npm registry（国内构建机访问 npmjs.org 不通时设为 https://registry.npmmirror.com）。
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org}"
 
 # ---------- 工具函数 ----------
 log()  { printf '\033[1;36m[release]\033[0m %s\n' "$*"; }
@@ -91,8 +93,8 @@ upload "Dockerfile.release"  "Dockerfile.release"
 upload "deploy/pi-agent"     "deploy/pi-agent"
 
 # ---------- 4. 远程构建镜像 ----------
-log "在目标机构建镜像 $IMAGE ..."
-ssh "$DEPLOY_HOST" "cd '$DEPLOY_DIR' && docker build -f Dockerfile.release -t '$IMAGE' ."
+log "在目标机构建镜像 $IMAGE (npm registry: $NPM_REGISTRY) ..."
+ssh "$DEPLOY_HOST" "cd '$DEPLOY_DIR' && docker build -f Dockerfile.release --build-arg NPM_REGISTRY='$NPM_REGISTRY' -t '$IMAGE' ."
 
 # ---------- 5. 远程重启 ----------
 log "通过 docker compose 重启服务 ($COMPOSE_DIR) ..."

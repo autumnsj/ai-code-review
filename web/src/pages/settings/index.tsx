@@ -1,8 +1,9 @@
-import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm, AutoComplete, Tooltip } from 'antd'
+import { Button, Card, Form, Input, InputNumber, Radio, Select, Switch, Tabs, Typography, App, Space, Popconfirm, AutoComplete, Tooltip, TimePicker, Modal } from 'antd'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec, ReviewLimits } from '../../api/settings'
+import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec, ReviewLimits, ReportKind, ReportScheduleConfig } from '../../api/settings'
 import { ReloadOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 
 export default function SettingsPage() {
   return (
@@ -14,6 +15,7 @@ export default function SettingsPage() {
           { key: 'dimensions', label: '打分维度', children: <DimensionsPane /> },
           { key: 'review-limits', label: '审查范围', children: <ReviewLimitsPane /> },
           { key: 'notifications', label: '通知', children: <NotificationsPane /> },
+          { key: 'scheduled-reports', label: '定时报告', children: <ScheduledReportsPane /> },
           { key: 'server', label: '服务', children: <ServerPane /> },
           { key: 'security', label: '安全', children: <SecurityPane /> },
         ]}
@@ -312,6 +314,181 @@ function NotificationsPane() {
           保存
         </Button>
       </Form>
+    </Card>
+  )
+}
+
+const WEEKDAY_OPTIONS = [
+  { value: 1, label: '周一' },
+  { value: 2, label: '周二' },
+  { value: 3, label: '周三' },
+  { value: 4, label: '周四' },
+  { value: 5, label: '周五' },
+  { value: 6, label: '周六' },
+  { value: 7, label: '周日' },
+]
+
+type ReportFormValues = {
+  daily: { enabled: boolean; send_at: dayjs.Dayjs }
+  weekly: { enabled: boolean; send_at: dayjs.Dayjs; weekday: number }
+}
+
+function ScheduledReportsPane() {
+  const qc = useQueryClient()
+  const { message } = App.useApp()
+  const [form] = Form.useForm<ReportFormValues>()
+  const { data, isLoading } = useQuery({
+    queryKey: ['settings-report-schedules'],
+    queryFn: settingsApi.getReportSchedules,
+  })
+
+  const fillForm = (cfg: ReportScheduleConfig) => {
+    form.setFieldsValue({
+      daily: { enabled: cfg.daily.enabled, send_at: dayjs(cfg.daily.send_at, 'HH:mm') },
+      weekly: {
+        enabled: cfg.weekly.enabled,
+        send_at: dayjs(cfg.weekly.send_at, 'HH:mm'),
+        weekday: cfg.weekly.weekday,
+      },
+    })
+  }
+  useEffect(() => {
+    if (data) fillForm(data)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, form])
+
+  const save = useMutation({
+    mutationFn: (v: ReportFormValues) =>
+      settingsApi.updateReportSchedules({
+        daily: {
+          enabled: !!v.daily?.enabled,
+          send_at: v.daily?.send_at ? v.daily.send_at.format('HH:mm') : '09:00',
+          weekday: 1,
+        },
+        weekly: {
+          enabled: !!v.weekly?.enabled,
+          send_at: v.weekly?.send_at ? v.weekly.send_at.format('HH:mm') : '09:00',
+          weekday: v.weekly?.weekday || 1,
+        },
+      }),
+    onSuccess: (d) => {
+      message.success('已保存')
+      fillForm(d)
+      qc.invalidateQueries({ queryKey: ['settings-report-schedules'] })
+    },
+    onError: (e: any) => message.error(e?.response?.data?.error || '保存失败'),
+  })
+
+  // 预览：生成当前周期报告内容，确认后立即入队发送。
+  const [preview, setPreview] = useState<{ kind: ReportKind; title: string; markdown: string } | null>(null)
+  const [previewing, setPreviewing] = useState<ReportKind | null>(null)
+  const doPreview = async (kind: ReportKind) => {
+    setPreviewing(kind)
+    try {
+      const r = await settingsApi.previewReport(kind)
+      setPreview({ kind, title: r.title, markdown: r.markdown })
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '生成预览失败')
+    } finally {
+      setPreviewing(null)
+    }
+  }
+  const run = useMutation({
+    mutationFn: (kind: ReportKind) => settingsApi.runReport(kind),
+    onSuccess: () => {
+      message.success('已入队，稍后将推送到所有启用的通知渠道（可在「任务」页查看执行状态）')
+      setPreview(null)
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+    },
+    onError: (e: any) => message.error(e?.response?.data?.error || '入队失败'),
+  })
+
+  return (
+    <Card loading={isLoading} style={{ maxWidth: 720 }}>
+      <Typography.Paragraph type="secondary">
+        到点自动汇总审查情况并推送到「通知」页中<b>所有启用的渠道</b>，时间均为北京时间。
+        日报统计前一天全天，周报统计前 7 天；周期内没有审查记录也会发送一条简报。默认关闭。
+      </Typography.Paragraph>
+      <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
+        <Card
+          size="small"
+          title="日报"
+          style={{ marginBottom: 16 }}
+          extra={
+            <Form.Item name={['daily', 'enabled']} valuePropName="checked" noStyle>
+              <Switch checkedChildren="启用" unCheckedChildren="停用" />
+            </Form.Item>
+          }
+        >
+          <Form.Item label="每天推送时间" name={['daily', 'send_at']} rules={[{ required: true }]}>
+            <TimePicker format="HH:mm" minuteStep={5} allowClear={false} showNow={false} style={{ width: 160 }} />
+          </Form.Item>
+          <Typography.Text type="secondary">每天定时汇总前一天的审查次数、平均分、问题数与作者榜单。</Typography.Text>
+        </Card>
+        <Card
+          size="small"
+          title="周报"
+          style={{ marginBottom: 16 }}
+          extra={
+            <Form.Item name={['weekly', 'enabled']} valuePropName="checked" noStyle>
+              <Switch checkedChildren="启用" unCheckedChildren="停用" />
+            </Form.Item>
+          }
+        >
+          <Space size="middle" wrap>
+            <Form.Item label="每周" name={['weekly', 'weekday']} rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+              <Select options={WEEKDAY_OPTIONS} style={{ width: 110 }} />
+            </Form.Item>
+            <Form.Item label="推送时间" name={['weekly', 'send_at']} rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+              <TimePicker format="HH:mm" minuteStep={5} allowClear={false} showNow={false} style={{ width: 140 }} />
+            </Form.Item>
+          </Space>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+            每周定时汇总前 7 天的审查情况。
+          </Typography.Paragraph>
+        </Card>
+        <Space>
+          <Button type="primary" htmlType="submit" loading={save.isPending}>保存</Button>
+          <Button loading={previewing === 'daily'} onClick={() => doPreview('daily')}>预览日报</Button>
+          <Button loading={previewing === 'weekly'} onClick={() => doPreview('weekly')}>预览周报</Button>
+        </Space>
+      </Form>
+      <Modal
+        open={!!preview}
+        title={preview?.title}
+        width={680}
+        onCancel={() => setPreview(null)}
+        footer={[
+          <Button key="close" onClick={() => setPreview(null)}>关闭</Button>,
+          <Button
+            key="send"
+            type="primary"
+            loading={run.isPending}
+            onClick={() => preview && run.mutate(preview.kind)}
+          >
+            确认发送
+          </Button>,
+        ]}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          以下为当前时间对应统计周期的报告内容，「确认发送」将立即推送到所有启用的通知渠道。
+        </Typography.Paragraph>
+        <div
+          style={{
+            whiteSpace: 'pre-wrap',
+            background: '#fafafa',
+            border: '1px solid #f0f0f0',
+            borderRadius: 8,
+            padding: 12,
+            maxHeight: 420,
+            overflow: 'auto',
+            fontSize: 13,
+            lineHeight: 1.8,
+          }}
+        >
+          {preview?.markdown}
+        </div>
+      </Modal>
     </Card>
   )
 }

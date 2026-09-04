@@ -92,4 +92,25 @@ export const settingsApi = {
     http.get<{ limits: ReviewLimits }>('/api/admin/settings/review-limits').then(r => r.data.limits),
   updateReviewLimits: (limits: ReviewLimits) =>
     http.put<{ limits: ReviewLimits }>('/api/admin/settings/review-limits', limits).then(r => r.data.limits),
+  getReportSchedules: () =>
+    http.get<ReportScheduleConfig>('/api/admin/settings/report-schedules').then(r => r.data),
+  updateReportSchedules: (cfg: ReportScheduleConfig) =>
+    http.put<ReportScheduleConfig>('/api/admin/settings/report-schedules', cfg).then(r => r.data),
+  previewReport: (kind: ReportKind) =>
+    http.post<{ title: string; markdown: string }>('/api/admin/report-schedules/preview', { kind }).then(r => r.data),
+  runReport: (kind: ReportKind) =>
+    http.post<{ ok: boolean }>('/api/admin/report-schedules/run', { kind }).then(r => r.data),
+}
+
+export type ReportKind = 'daily' | 'weekly'
+
+export interface ReportSchedule {
+  enabled: boolean
+  send_at: string // "HH:MM"（北京时间）
+  weekday: number // 仅周报：1=周一…7=周日
+}
+
+export interface ReportScheduleConfig {
+  daily: ReportSchedule
+  weekly: ReportSchedule
 }

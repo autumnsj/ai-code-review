@@ -75,13 +75,15 @@ type AuthorStats struct {
 
 // AuthorFilter 作者统计的过滤条件。
 type AuthorFilter struct {
-	Days        int    // 0 表示全部
+	Days        int    // 0 表示全部；Since 非空时忽略
 	RepoID      int64  // 0 表示全部
 	Author      string // 模糊匹配；AuthorExact 非空时精确匹配
 	AuthorExact string
 	Sort        string // avg_score|additions|deletions|churn|review_count|findings
 	Limit       int
 	Offset      int
+	Since       *time.Time // 绝对窗口起（含），定时报告用；非空时优先于 Days
+	Until       *time.Time // 绝对窗口止（不含）
 }
 
 var authorSortColumns = map[string]string{
@@ -173,7 +175,14 @@ func (s *Store) buildAuthorQuery(f AuthorFilter) (string, []any) {
 	var b strings.Builder
 	b.WriteString(authorSelect)
 	args := []any{}
-	if f.Days > 0 {
+	if f.Since != nil {
+		b.WriteString(" AND rv.finished_at >= ?")
+		args = append(args, *f.Since)
+		if f.Until != nil {
+			b.WriteString(" AND rv.finished_at < ?")
+			args = append(args, *f.Until)
+		}
+	} else if f.Days > 0 {
 		b.WriteString(" AND rv.finished_at >= ?")
 		args = append(args, time.Now().Add(-time.Duration(f.Days)*24*time.Hour))
 	}

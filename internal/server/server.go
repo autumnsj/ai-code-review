@@ -29,11 +29,12 @@ type Server struct {
 	baseURL   string
 	jwt       *auth.Manager
 	webhook   *webhook.Handler
-	notifiers NotifierSettings
-	starter   ReviewStarter
-	jobs      JobAdmin
-	dash      DashboardProvider
-	stats     StatsProvider
+	notifiers  NotifierSettings
+	reports    ReportSettingsProvider
+	starter    ReviewStarter
+	jobs       JobAdmin
+	dash       DashboardProvider
+	stats      StatsProvider
 	loginGuard *middleware.LoginGuard
 }
 
@@ -124,7 +125,17 @@ type StatsProvider interface {
 	GetAuthor(ctx context.Context, author string, days int, repoID int64) (*AuthorDetail, error)
 }
 
-func New(st *store.Store, log *zap.Logger, webFS fs.FS, baseURL string, jwt *auth.Manager, wh *webhook.Handler, notif NotifierSettings, starter ReviewStarter, jobs JobAdmin, dash DashboardProvider, stats StatsProvider) *Server {
+// ReportSettingsProvider 定时日报/周报配置读写、预览与立即发送。
+type ReportSettingsProvider interface {
+	GetReportSchedules(ctx context.Context) (domain.ReportScheduleConfig, error)
+	SaveReportSchedules(ctx context.Context, cfg domain.ReportScheduleConfig) error
+	// PreviewReport 按当前时间算出统计周期并生成报告内容（不发送）。
+	PreviewReport(ctx context.Context, kind string) (title, markdown string, err error)
+	// RunReportNow 立即入队一条手动报告任务。
+	RunReportNow(ctx context.Context, kind string) error
+}
+
+func New(st *store.Store, log *zap.Logger, webFS fs.FS, baseURL string, jwt *auth.Manager, wh *webhook.Handler, notif NotifierSettings, reports ReportSettingsProvider, starter ReviewStarter, jobs JobAdmin, dash DashboardProvider, stats StatsProvider) *Server {
 	return &Server{
 		store:      st,
 		log:        log,
@@ -133,6 +144,7 @@ func New(st *store.Store, log *zap.Logger, webFS fs.FS, baseURL string, jwt *aut
 		jwt:        jwt,
 		webhook:    wh,
 		notifiers:  notif,
+		reports:    reports,
 		starter:    starter,
 		jobs:       jobs,
 		dash:       dash,
@@ -178,6 +190,10 @@ func (s *Server) Router() *gin.Engine {
 		authed.PUT("/settings/dimensions", s.updateDimensions)
 		authed.GET("/settings/review-limits", s.getReviewLimits)
 		authed.PUT("/settings/review-limits", s.updateReviewLimits)
+		authed.GET("/settings/report-schedules", s.getReportSchedules)
+		authed.PUT("/settings/report-schedules", s.updateReportSchedules)
+		authed.POST("/report-schedules/preview", s.previewReport)
+		authed.POST("/report-schedules/run", s.runReport)
 
 		authed.GET("/repos", s.listRepos)
 		authed.POST("/repos", s.createRepo)

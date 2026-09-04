@@ -21,6 +21,7 @@ import (
 	"github.com/ai-code-review/aicr/internal/config"
 	"github.com/ai-code-review/aicr/internal/notifier"
 	"github.com/ai-code-review/aicr/internal/queue"
+	"github.com/ai-code-review/aicr/internal/report"
 	"github.com/ai-code-review/aicr/internal/server"
 	"github.com/ai-code-review/aicr/internal/store"
 	"github.com/ai-code-review/aicr/internal/webhook"
@@ -42,9 +43,10 @@ type application struct {
 }
 
 type runtime struct {
-	st     *store.Store
-	sqlDB  *sql.DB
-	sched  *queue.Scheduler
+	st        *store.Store
+	sqlDB     *sql.DB
+	sched     *queue.Scheduler
+	reportSvc *report.Service
 }
 
 func newApp(cfg *config.Config, log *zap.Logger) (*application, error) {
@@ -197,19 +199,21 @@ func (a *application) buildRuntime(driver, dsn, adminPassword, baseURL string) (
 
 	dispatcher := notifier.NewDispatcher(st, a.log, serverCfg.BaseURL)
 	pipeline.SetNotifier(dispatcher)
+	reportSvc := report.NewService(st, dispatcher, a.log)
 	sched.Register("review", pipeline.HandleJob)
+	sched.Register("report", reportSvc.HandleJob)
 
 	enq := &reviewEnqueuer{q: sched}
 	wh := webhook.NewHandler(st, a.log, enq)
-	adminSvc := newAdminService(st, enq)
+	adminSvc := newAdminService(st, enq, reportSvc, sched)
 
-	srv := server.New(st, a.log, a.webFS, serverCfg.BaseURL, jwtMgr, wh, dispatcher, adminSvc, adminSvc, adminSvc, adminSvc)
+	srv := server.New(st, a.log, a.webFS, serverCfg.BaseURL, jwtMgr, wh, dispatcher, adminSvc, adminSvc, adminSvc, adminSvc, adminSvc)
 	router := srv.Router()
 
-	return &runtime{st: st, sqlDB: db, sched: sched}, router, nil
+	return &runtime{st: st, sqlDB: db, sched: sched, reportSvc: reportSvc}, router, nil
 }
 
-// startWorker 启动队列调度器（及配套的僵尸审查 reaper），返回可等待其退出的 channel。
+// startWorker 启动队列调度器（及配套的僵尸审查 reaper、定时报告 cron），返回可等待其退出的 channel。
 func (a *application) startWorker(rt *runtime) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -220,4 +224,5 @@ func (a *application) startWorker(rt *runtime) {
 		close(done)
 	}()
 	a.startReaper(ctx, rt.st)
+	a.startReportCron(ctx, rt.sched, rt.reportSvc)
 }

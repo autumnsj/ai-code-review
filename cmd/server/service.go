@@ -11,18 +11,45 @@ import (
 
 	"github.com/ai-code-review/aicr/internal/domain"
 	"github.com/ai-code-review/aicr/internal/platform"
+	"github.com/ai-code-review/aicr/internal/queue"
+	"github.com/ai-code-review/aicr/internal/report"
 	"github.com/ai-code-review/aicr/internal/server"
 	"github.com/ai-code-review/aicr/internal/store"
 )
 
 // adminService 装配手动触发、任务管理与 dashboard，供 HTTP 层调用。
 type adminService struct {
-	store *store.Store
-	enq   *reviewEnqueuer
+	store     *store.Store
+	enq       *reviewEnqueuer
+	reportSvc *report.Service
+	sched     *queue.Scheduler
 }
 
-func newAdminService(st *store.Store, enq *reviewEnqueuer) *adminService {
-	return &adminService{store: st, enq: enq}
+func newAdminService(st *store.Store, enq *reviewEnqueuer, reportSvc *report.Service, sched *queue.Scheduler) *adminService {
+	return &adminService{store: st, enq: enq, reportSvc: reportSvc, sched: sched}
+}
+
+// GetReportSchedules 返回定时报告调度配置（缺省时为归一化默认，日报/周报均关闭）。
+func (s *adminService) GetReportSchedules(ctx context.Context) (domain.ReportScheduleConfig, error) {
+	return s.reportSvc.Config(ctx), nil
+}
+
+// SaveReportSchedules 保存调度配置。
+func (s *adminService) SaveReportSchedules(ctx context.Context, cfg domain.ReportScheduleConfig) error {
+	return s.reportSvc.SaveConfig(ctx, cfg)
+}
+
+// PreviewReport 生成当前周期的日报/周报内容但不发送。
+func (s *adminService) PreviewReport(ctx context.Context, kind string) (string, string, error) {
+	title, markdown, _, _, err := s.reportSvc.Build(ctx, kind, time.Now())
+	return title, markdown, err
+}
+
+// RunReportNow 立即入队一条手动报告任务（幂等键带时间戳，允许重复发送）。
+func (s *adminService) RunReportNow(ctx context.Context, kind string) error {
+	payload, key := report.PayloadFor(kind, time.Now(), true)
+	_, err := s.sched.Enqueue(ctx, "report", payload, key)
+	return err
 }
 
 func newPublicToken() string {

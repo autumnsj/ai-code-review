@@ -325,6 +325,63 @@ func (l ReviewLimits) Normalize() ReviewLimits {
 	return l
 }
 
+// 定时报告（日报/周报）默认值与配置（settings.report_schedules）。
+const (
+	DefaultReportSendAt  = "09:00" // 北京时间默认推送时间
+	DefaultReportWeekday = 1      // 周报默认周一（1=周一…7=周日）
+)
+
+// ReportSchedule 单类定时报告（日报或周报）的调度配置。
+type ReportSchedule struct {
+	Enabled bool   `json:"enabled"`
+	SendAt  string `json:"send_at"`  // "HH:MM"，按 Asia/Shanghai 解释
+	Weekday int    `json:"weekday"`  // 仅周报用：1=周一…7=周日
+}
+
+// ReportScheduleConfig 日报/周报调度配置；零值经 Normalize 后总是有效。
+type ReportScheduleConfig struct {
+	Daily  ReportSchedule `json:"daily"`
+	Weekly ReportSchedule `json:"weekly"`
+}
+
+// Normalize 修正缺失/越界值为安全默认，返回归一化副本。enabled 保持用户设置（默认关）。
+func (c ReportScheduleConfig) Normalize() ReportScheduleConfig {
+	fix := func(s ReportSchedule, weekday int) ReportSchedule {
+		if !isValidHHMM(s.SendAt) {
+			s.SendAt = DefaultReportSendAt
+		}
+		if s.Weekday < 1 || s.Weekday > 7 {
+			s.Weekday = weekday
+		}
+		return s
+	}
+	c.Daily = fix(c.Daily, DefaultReportWeekday)
+	c.Weekly = fix(c.Weekly, DefaultReportWeekday)
+	return c
+}
+
+// isValidHHMM 校验 "HH:MM"（24 小时制）。
+func isValidHHMM(v string) bool {
+	if len(v) != 5 || v[2] != ':' {
+		return false
+	}
+	digit := func(b byte) (int, bool) {
+		if b < '0' || b > '9' {
+			return 0, false
+		}
+		return int(b - '0'), true
+	}
+	d0, ok0 := digit(v[0])
+	d1, ok1 := digit(v[1])
+	d3, ok3 := digit(v[3])
+	d4, ok4 := digit(v[4])
+	if !ok0 || !ok1 || !ok3 || !ok4 {
+		return false
+	}
+	h, m := d0*10+d1, d3*10+d4
+	return h <= 23 && m <= 59
+}
+
 // WebhookEvent 各平台解析后的统一事件。
 type WebhookEvent struct {
 	Provider      Provider

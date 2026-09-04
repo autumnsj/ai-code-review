@@ -122,6 +122,27 @@ func (d *Dispatcher) memberName(ctx context.Context, key string) string {
 	return strings.TrimSpace(a.DisplayName)
 }
 
+// SendMarkdown 向所有启用渠道广播一条自定义 markdown 消息（定时日报/周报用）。
+// 渠道级失败只记日志，不中断其余渠道。
+func (d *Dispatcher) SendMarkdown(ctx context.Context, title, markdown string) {
+	chs, err := d.channels(ctx)
+	if err != nil {
+		d.log.Error("load notifier channels", zap.Error(err))
+		return
+	}
+	enabled := make([]Channel, 0, len(chs))
+	for _, ch := range chs {
+		if ch.Enabled && ch.WebhookURL != "" {
+			enabled = append(enabled, ch)
+		}
+	}
+	if len(enabled) == 0 {
+		d.log.Warn("report: no enabled notifier channels, message dropped", zap.String("title", title))
+		return
+	}
+	d.sendToChannels(ctx, enabled, title, markdown)
+}
+
 func (d *Dispatcher) sendToChannels(ctx context.Context, chs []Channel, title, md string) {
 	for _, ch := range chs {
 		n, err := New(ch)

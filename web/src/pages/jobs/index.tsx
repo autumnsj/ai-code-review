@@ -51,7 +51,7 @@ export default function JobsPage() {
         pagination={{ current: page, pageSize: 20, total: data?.total ?? 0, onChange: setPage }}
         columns={[
           { title: 'ID', dataIndex: 'id', width: 70 },
-          { title: '类型', dataIndex: 'kind', width: 100 },
+          { title: '类型', dataIndex: 'kind', width: 100, render: (v: string) => v === 'report' ? '定时报告' : '代码审查' },
           {
             title: '状态', dataIndex: 'status', width: 130,
             render: (v: string) => <Tag color={STATUS_COLORS[v] || 'default'}>{v}</Tag>,

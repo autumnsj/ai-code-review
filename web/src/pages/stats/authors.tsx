@@ -19,10 +19,8 @@ const DAYS_OPTIONS = [
 ]
 
 const SORT_OPTIONS = [
+  { value: 'review_count', label: '完成功能数' },
   { value: 'avg_score', label: '平均评分' },
-  { value: 'review_count', label: '审查次数' },
-  { value: 'additions', label: '新增行数' },
-  { value: 'deletions', label: '删除行数' },
   { value: 'findings', label: '问题数量' },
 ]
 
@@ -52,12 +50,10 @@ export default function AuthorsStatsPage() {
   const totals = items.reduce(
     (acc, a) => {
       acc.reviews += a.review_count
-      acc.add += a.additions
-      acc.del += a.deletions
       acc.findings += a.findings_total
       return acc
     },
-    { reviews: 0, add: 0, del: 0, findings: 0 },
+    { reviews: 0, findings: 0 },
   )
 
   return (
@@ -65,10 +61,9 @@ export default function AuthorsStatsPage() {
       <Title level={3}>作者排行</Title>
 
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="作者数" value={items.length} loading={isLoading} /></Card></Col>
-        <Col span={6}><Card><Statistic title="审查总次数" value={totals.reviews} loading={isLoading} /></Card></Col>
-        <Col span={6}><Card><Statistic title="代码变动（+/-）" value={`+${totals.add} / -${totals.del}`} loading={isLoading} /></Card></Col>
-        <Col span={6}><Card><Statistic title="问题总数" value={totals.findings} valueStyle={{ color: totals.findings > 0 ? '#cf1322' : undefined }} loading={isLoading} /></Card></Col>
+        <Col span={8}><Card><Statistic title="作者数" value={items.length} loading={isLoading} /></Card></Col>
+        <Col span={8}><Card><Statistic title="完成功能总数" value={totals.reviews} loading={isLoading} /></Card></Col>
+        <Col span={8}><Card><Statistic title="问题总数" value={totals.findings} valueStyle={{ color: totals.findings > 0 ? '#cf1322' : undefined }} loading={isLoading} /></Card></Col>
       </Row>
 
       <Card
@@ -102,7 +97,7 @@ export default function AuthorsStatsPage() {
                 </span>
               ),
             },
-            { title: '审查次数', dataIndex: 'review_count', width: 100, sorter: (a, b) => a.review_count - b.review_count },
+            { title: '完成功能', dataIndex: 'review_count', width: 100, sorter: (a, b) => a.review_count - b.review_count },
             {
               title: '平均分', dataIndex: 'avg_total', width: 110, sorter: (a, b) => a.avg_total - b.avg_total,
               render: (v: number) => <span style={{ color: scoreColor(v), fontWeight: 600 }}>{v.toFixed(1)}</span>,
@@ -115,10 +110,6 @@ export default function AuthorsStatsPage() {
             { title: '安全', dataIndex: 'avg_security', width: 120, render: (v: number) => <DimBar value={v} /> },
             { title: '可维护', dataIndex: 'avg_maint', width: 120, render: (v: number) => <DimBar value={v} /> },
             {
-              title: '代码量', key: 'code', width: 160,
-              render: (_: any, r) => <span><span style={{ color: '#3f8600' }}>+{r.additions}</span> / <span style={{ color: '#cf1322' }}>-{r.deletions}</span></span>,
-            },
-            {
               title: '问题', key: 'findings', width: 200,
               render: (_: any, r) => (
                 <Space size={4} wrap>
@@ -130,7 +121,7 @@ export default function AuthorsStatsPage() {
                 </Space>
               ),
             },
-            { title: '最近审查', dataIndex: 'last_reviewed', width: 140 },
+            { title: '最近功能', dataIndex: 'last_reviewed', width: 140 },
           ]}
         />
       </Card>
@@ -143,14 +134,10 @@ export default function AuthorsStatsPage() {
         {detail && (
           <>
             <Descriptions column={2} bordered size="small" title="汇总">
-              <Descriptions.Item label="审查次数">{detail.summary.review_count}</Descriptions.Item>
+              <Descriptions.Item label="完成功能数">{detail.summary.review_count}</Descriptions.Item>
               <Descriptions.Item label="平均分">
                 <span style={{ color: scoreColor(detail.summary.avg_total), fontWeight: 600 }}>{detail.summary.avg_total.toFixed(1)}</span>
               </Descriptions.Item>
-              <Descriptions.Item label="新增">{detail.summary.additions}</Descriptions.Item>
-              <Descriptions.Item label="删除">{detail.summary.deletions}</Descriptions.Item>
-              <Descriptions.Item label="变更文件">{detail.summary.files_changed}</Descriptions.Item>
-              <Descriptions.Item label="Token 用量">{detail.summary.tokens_used}</Descriptions.Item>
               <Descriptions.Item label="问题总数" span={2}>{detail.summary.findings_total}（严重 {detail.summary.critical} / 高 {detail.summary.high} / 中 {detail.summary.medium}）</Descriptions.Item>
             </Descriptions>
 
@@ -167,17 +154,21 @@ export default function AuthorsStatsPage() {
               })}
             </Card>
 
-            <Card title="最近审查" size="small" style={{ marginTop: 16 }}>
+            <Card title="最近完成功能" size="small" style={{ marginTop: 16 }}>
               {detail.recent.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无" /> : (
                 <Table
                   rowKey="id" size="small" pagination={false}
                   dataSource={detail.recent}
                   columns={[
-                    { title: 'ID', dataIndex: 'id', width: 60, render: (v: number) => <Link to={`/admin/reviews/${v}`}>#{v}</Link> },
-                    { title: '仓库', dataIndex: 'repo_name' },
-                    { title: '评分', dataIndex: 'score_total', width: 70, render: (v: number) => <span style={{ color: scoreColor(v) }}>{v}</span> },
-                    { title: '变动', key: 'c', width: 110, render: (_: any, r: any) => `+${r.additions}/-${r.deletions}` },
-                    { title: '时间', dataIndex: 'finished_at', width: 120 },
+                    {
+                      title: '功能', dataIndex: 'title',
+                      render: (v: string, r: { id: number }) => (
+                        <Link to={`/admin/reviews/${r.id}`}>{v || `审查 #${r.id}`}</Link>
+                      ),
+                    },
+                    { title: '仓库', dataIndex: 'repo_name', width: 110 },
+                    { title: '评分', dataIndex: 'score_total', width: 64, render: (v: number) => <span style={{ color: scoreColor(v), fontWeight: 600 }}>{v}</span> },
+                    { title: '时间', dataIndex: 'finished_at', width: 110 },
                   ]}
                 />
               )}

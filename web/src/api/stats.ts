@@ -28,10 +28,9 @@ export interface AuthorDetail {
   summary: AuthorSummary
   recent: Array<{
     id: number
+    title: string
     repo_name: string
     score_total: number
-    additions: number
-    deletions: number
     finished_at?: string | null
   }>
 }

@@ -1,7 +1,11 @@
 // Package domain 定义纯领域模型，不依赖任何外部包。
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // Provider 表示 Git 平台类型。
 type Provider string
@@ -85,6 +89,32 @@ type Review struct {
 	TriggeredAt   time.Time `json:"triggered_at"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+}
+
+// FeatureTitle 返回本次改动实现的功能标题，用于工作日报/功能台账：
+// PR 标题 → head 提交标题（stats.commit_subject）→ 目标分支名。
+func (r *Review) FeatureTitle() string {
+	if t := strings.TrimSpace(r.PRTitle); t != "" {
+		return t
+	}
+	if sub := commitSubject(r.Stats); sub != "" {
+		return sub
+	}
+	return strings.TrimSpace(r.TargetRef)
+}
+
+// commitSubject 从 stats JSON 中取 head 提交标题（无 PR 时作为功能描述）。
+func commitSubject(statsJSON string) string {
+	if strings.TrimSpace(statsJSON) == "" {
+		return ""
+	}
+	var st struct {
+		CommitSubject string `json:"commit_subject"`
+	}
+	if err := json.Unmarshal([]byte(statsJSON), &st); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(st.CommitSubject)
 }
 
 // ReviewAuthorReport 是一次审查中按作者（git blame 归属）拆分出的个人报告。

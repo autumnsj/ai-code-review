@@ -284,12 +284,12 @@ func (s *adminService) GetAuthor(ctx context.Context, author string, days int, r
 	if err != nil {
 		return nil, err
 	}
+	// recentItem 是作者的「最近完成功能」台账条目：功能标题（PR/commit）+ 仓库 + 评分 + 时间。
 	type recentItem struct {
 		ID         int64   `json:"id"`
+		Title      string  `json:"title"`
 		RepoName   string  `json:"repo_name"`
 		ScoreTotal int     `json:"score_total"`
-		Additions  int     `json:"additions"`
-		Deletions  int     `json:"deletions"`
 		FinishedAt *string `json:"finished_at"`
 	}
 	items := make([]any, 0, len(recent))
@@ -300,8 +300,8 @@ func (s *adminService) GetAuthor(ctx context.Context, author string, days int, r
 			fin = &s
 		}
 		items = append(items, recentItem{
-			ID: r.ID, RepoName: r.RepoName, ScoreTotal: r.ScoreTotal,
-			Additions: r.Additions, Deletions: r.Deletions, FinishedAt: fin,
+			ID: r.ID, Title: r.FeatureTitle(), RepoName: r.RepoName, ScoreTotal: r.ScoreTotal,
+			FinishedAt: fin,
 		})
 	}
 	summary := toAuthorSummary(a)

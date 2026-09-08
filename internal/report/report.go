@@ -122,7 +122,7 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 	for _, r := range rvs {
 		reviews = append(reviews, notifier.ReportReview{
 			Repo:   r.RepoName,
-			Title:  firstNonEmpty(r.PRTitle, commitSubject(r.Stats)),
+			Title:  r.FeatureTitle(),
 			Desc:   firstSentence(r.Summary),
 			Ref:    r.TargetRef,
 			Commit: r.CommitSHA,
@@ -254,20 +254,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// commitSubject 从 review 的 stats JSON 中取 head 提交标题（无 PR 时作为功能描述）。
-func commitSubject(statsJSON string) string {
-	if strings.TrimSpace(statsJSON) == "" {
-		return ""
-	}
-	var st struct {
-		CommitSubject string `json:"commit_subject"`
-	}
-	if err := json.Unmarshal([]byte(statsJSON), &st); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(st.CommitSubject)
 }
 
 // firstSentence 取摘要的第一句（按中英文句读切分），作为工作日报的功能概述。

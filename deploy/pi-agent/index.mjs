@@ -480,8 +480,14 @@ function diffForReview(src, input) {
 
   // 文件清单（含每个文件 +/-），提供给 agent 作为导航地图；
   // 超过文件数上限时只列出被抽中的最近改动文件，并标注总数，这只是路径与行数元数据。
+  // 单文件改动过大时标注 [大改动]：agent 若对这类文件直接 git diff，默认上下文会让
+  // 输出再翻几倍，一次灌爆上下文，必须按 prompt 里的分段方法查看。
+  const BIG_FILE_CHURN = 400;
   const fmtLine = (f) => {
-    const tag = f.binary ? " [binary]" : isLowValueFile(f.path) ? " [generated/lock]" : "";
+    let tag = "";
+    if (f.binary) tag = " [binary]";
+    else if (isLowValueFile(f.path)) tag = " [generated/lock]";
+    else if (f.add + f.del >= BIG_FILE_CHURN) tag = " [大改动:必须分段查看]";
     return `${f.add.toString().padStart(6)} ${f.del.toString().padStart(6)}  ${f.path}${tag}`;
   };
   const fileList = reviewFiles.map(fmtLine).join("\n");
@@ -702,6 +708,14 @@ async function main() {
     `- 看提交概览：\`git show --stat ${diff.head}\``,
     `- 用 read 读取改动周边的上下文、grep 查找调用点，确认问题是否真实。`,
     `- **禁止**直接执行不带路径的 \`git diff ${diff.base} ${diff.head}\` 或 \`git show ${diff.head}\`：那会一次性吐出全部改动。`,
+    ``,
+    `**单文件改动也可能很大**（清单中标注「大改动」、或增删合计超过约 300 行的文件）。`,
+    `直接 \`git diff\` 会带上下文、输出再翻数倍，一次就能撑爆上下文导致审查失败。这类文件必须：`,
+    `- 先只看变更行：\`git diff --unified=0 ${diff.base} ${diff.head} -- <path>\`（不输出上下文，行数最接近实际增删）；`,
+    `- 仍然太长就分段看，每次输出不超过约 200 行：\`git diff --unified=0 ${diff.base} ${diff.head} -- <path> | sed -n '1,200p'\`，再换 201,400p …；`,
+    `- read 不要整读大文件：先 grep 定位行号再读周边，或按行范围读（单次 ≤ 200 行）；`,
+    `- 任何命令发现输出超长，后续一律加 \`| head -200\` 之类的限制；宁可多看几段，也不要让一次输出超过约 200 行。`,
+    `- 超大文件（如超千行）只需抽查安全/核心逻辑相关的改动段，不必逐行看完，在 summary 中注明该文件为抽查。`,
     codegraphReady
       ? [
           ``,

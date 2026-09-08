@@ -105,7 +105,8 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 	for _, r := range rvs {
 		reviews = append(reviews, notifier.ReportReview{
 			Repo:   r.RepoName,
-			Title:  r.PRTitle,
+			Title:  firstNonEmpty(r.PRTitle, commitSubject(r.Stats)),
+			Desc:   firstSentence(r.Summary),
 			Ref:    r.TargetRef,
 			Commit: r.CommitSHA,
 			Author: authorOf(r.Author),
@@ -136,9 +137,9 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 		},
 		reviews, findings)
 
-	title := "代码审查日报"
+	title := "团队工作日报"
 	if p.Kind == KindWeekly {
-		title = "代码审查周报"
+		title = "团队工作周报"
 	}
 	if p.Manual {
 		title += "（手动发送）"
@@ -226,6 +227,44 @@ func (n *authorNamer) name(ctx context.Context, key string) string {
 	}
 	n.cache[key] = out
 	return out
+}
+
+// firstNonEmpty 返回第一个去空白后非空的字符串。
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// commitSubject 从 review 的 stats JSON 中取 head 提交标题（无 PR 时作为功能描述）。
+func commitSubject(statsJSON string) string {
+	if strings.TrimSpace(statsJSON) == "" {
+		return ""
+	}
+	var st struct {
+		CommitSubject string `json:"commit_subject"`
+	}
+	if err := json.Unmarshal([]byte(statsJSON), &st); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(st.CommitSubject)
+}
+
+// firstSentence 取摘要的第一句（按中英文句读切分），作为工作日报的功能概述。
+func firstSentence(summary string) string {
+	s := strings.TrimSpace(summary)
+	if s == "" {
+		return ""
+	}
+	for i, r := range s {
+		if r == '。' || r == '！' || r == '？' || r == '.' || r == '!' || r == '?' || r == '\n' {
+			return strings.TrimSpace(s[:i])
+		}
+	}
+	return s
 }
 
 // shortLocation 把文件路径截短为最后两段 + 行号（a/b/c.go:12 → b/c.go:12），

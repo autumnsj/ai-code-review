@@ -493,8 +493,14 @@ function diffForReview(src, input) {
   const fileList = reviewFiles.map(fmtLine).join("\n");
   const omittedFiles = Math.max(0, filesChanged - reviewFiles.length);
 
+  // head 提交标题（commit message 首行）：无 PR 的 push 审查用它作为「做了什么功能」的描述。
+  let commitSubject = "";
+  try {
+    commitSubject = git(src, ["log", "-1", "--format=%s", head]).trim();
+  } catch { commitSubject = ""; }
+
   return {
-    head, base, filesChanged, additions, deletions, fileList, commitAuthor,
+    head, base, filesChanged, additions, deletions, fileList, commitAuthor, commitSubject,
     windowDays, narrowed, rangeStart, rangeStartAt: baseTime, headAt: headTime,
     maxFiles, filesLimited, omittedFiles, reviewFileCount: reviewFiles.length,
   };
@@ -596,6 +602,8 @@ async function main() {
     additionalSkillPaths: [join(__dirname, "skills")],
     systemPrompt: [
       "你是一名严谨的资深代码审查员，运行在 CI 环境中，对一次代码提交做只读审查。",
+      "你既是代码质量审查员，也是功能验收者：不仅找代码缺陷，还要先弄清这次改动要实现什么功能，",
+      "并判断该功能是否被正确、完整地实现（业务逻辑分支、边界与异常路径、状态流转、接口契约、前后端字段一致）。",
       "你不能修改代码，只能阅读、搜索、运行只读的 shell 命令（如 git diff / git show）。",
       "",
       "工作目录就是被审仓库，当前已 checkout 到待审提交。",
@@ -611,7 +619,10 @@ async function main() {
       "3. severity 只能是 critical | high | medium | low | info；info 不扣分。",
       "4. 评分 0-100，按每个维度的「评分标准描述」独立打分；没有问题给高分，问题要在 rationale 中说明。",
       "5. 只报告真实、可定位的问题；每个 finding 的 file_path/line 必须准确。",
-      "6. summary 用中文，简洁概括本次改动的质量与主要问题。",
+      "6. findings 必须覆盖功能层面的问题：业务逻辑错误、条件/分支写反、漏处理边界或异常路径、",
+      "   功能未按 PR/commit 意图完整实现、接口契约或字段不一致等；不要只报代码风格与安全问题。",
+      "7. summary 用中文：第一句必须是「本次改动实现了什么功能」的一句话概括（供自动生成工作日报使用，",
+      "   例如「本次改动实现了订单数据导出功能，支持按时间范围筛选并异步下载」），随后再概述质量与主要问题。",
     ].join("\n"),
     extensionFactories: [(pi) => {
       pi.registerTool({
@@ -619,7 +630,7 @@ async function main() {
         label: "提交审查报告",
         description: "完成分析后调用，提交本次代码审查的结构化报告。只能调用一次。",
         parameters: Type.Object({
-          summary: Type.String({ description: "中文摘要，概述改动质量与主要问题" }),
+          summary: Type.String({ description: "中文摘要：第一句必须一句话概括本次改动实现了什么功能（供自动工作日报使用），随后概述改动质量与主要问题" }),
           dimensions: Type.Record(Type.String(), Type.Object({
             score: Type.Integer({ minimum: 0, maximum: 100, description: "该维度 0-100 分" }),
             rationale: Type.String({ description: "打分理由" }),
@@ -969,6 +980,8 @@ async function main() {
       range_end_at: diff.headAt || "",
       window_days: diff.windowDays,
       range_narrowed: diff.narrowed,
+      // head 提交标题，供平台生成工作日报（无 PR 标题时作为功能描述）。
+      commit_subject: diff.commitSubject || "",
       // 文件数抽样：超过上限时只把最近改动的一批交给 AI。
       max_files: diff.maxFiles,
       files_limited: diff.filesLimited,

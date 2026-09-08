@@ -406,8 +406,9 @@ function ScheduledReportsPane() {
   return (
     <Card loading={isLoading} style={{ maxWidth: 720 }}>
       <Typography.Paragraph type="secondary">
-        到点自动汇总审查情况并推送到「通知」页中<b>所有启用的渠道</b>，时间均为北京时间。
-        日报统计前一天全天，周报统计前 7 天；周期内没有审查记录也会发送一条简报。默认关闭。
+        到点自动生成团队工作日报/周报并推送到「通知」页中<b>所有启用的渠道</b>，代替人工写日报：
+        按成员汇总本期完成的功能工作（取自审查的 PR/提交标题与 AI 功能概述），并附重点问题提醒。
+        日报汇总前一天全天，周报汇总前 7 天；时间均为北京时间，周期内没有审查记录也会发送简报。默认关闭。
       </Typography.Paragraph>
       <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
         <Card
@@ -423,7 +424,7 @@ function ScheduledReportsPane() {
           <Form.Item label="每天推送时间" name={['daily', 'send_at']} rules={[{ required: true }]}>
             <TimePicker format="HH:mm" minuteStep={5} allowClear={false} showNow={false} style={{ width: 160 }} />
           </Form.Item>
-          <Typography.Text type="secondary">每天定时汇总前一天的审查次数、平均分、问题数与作者榜单。</Typography.Text>
+          <Typography.Text type="secondary">每天定时汇总前一天每位成员完成的功能工作（PR/提交 + AI 功能概述），并附重点问题。</Typography.Text>
         </Card>
         <Card
           size="small"
@@ -444,7 +445,7 @@ function ScheduledReportsPane() {
             </Form.Item>
           </Space>
           <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-            每周定时汇总前 7 天的审查情况。
+            每周定时汇总前 7 天每位成员完成的功能工作。
           </Typography.Paragraph>
         </Card>
         <Space>

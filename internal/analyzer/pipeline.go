@@ -127,6 +127,8 @@ type ReportStats struct {
 	RangeEndAt    string `json:"range_end_at,omitempty"`
 	WindowDays    int    `json:"window_days,omitempty"`
 	RangeNarrowed bool   `json:"range_narrowed,omitempty"`
+	// CommitSubject 是 head 提交标题（commit message 首行），供工作日报在无 PR 标题时描述功能。
+	CommitSubject string `json:"commit_subject,omitempty"`
 	// 文件数抽样：超过上限时只把最近改动的一批交给 AI。
 	MaxFiles      int  `json:"max_files,omitempty"`
 	FilesLimited  bool `json:"files_limited,omitempty"`

@@ -196,11 +196,13 @@ type ReportTotals struct {
 	High        int64 // 重点问题：high 数
 }
 
-// ReportReview 日报/周报「审查记录」清单中的一条审查。
-// Author 为已格式化的展示名；Title 为 PR 标题（空时展示 Ref 分支）。
+// ReportReview 日报/周报工作清单中的一条审查。
+// Author 为已格式化的展示名；Title 为功能标题（PR 标题/commit 标题，空时回退分支）；
+// Desc 为功能概述（AI summary 首句，可空）。
 type ReportReview struct {
 	Repo   string
 	Title  string
+	Desc   string
 	Ref    string
 	Commit string
 	Author string
@@ -220,15 +222,15 @@ type ReportFinding struct {
 }
 
 // BuildReportMarkdown 生成定时日报/周报的 markdown。窗口为 [start, end)（北京时间），
-// kind 为 "daily" 或 "weekly"；内容聚焦「审了什么、发现了什么问题」：
-// 审查记录清单（仓库/PR 或分支/提交/作者/评分）+ 重点问题清单（critical/high）。
+// kind 为 "daily" 或 "weekly"。报告定位是「代替员工写工作日报」：主体为按作者分组的
+// 工作内容（做了什么功能），其后附重点问题（critical/high）与失败审查。
 func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, reviews []ReportReview, findings []ReportFinding) string {
 	titleWord, period := "日报", start.Format("2006-01-02")+"（全天）"
 	if kind == "weekly" {
 		titleWord = "周报"
 		period = start.Format("2006-01-02") + " ～ " + end.AddDate(0, 0, -1).Format("2006-01-02")
 	}
-	md := fmt.Sprintf("## 📊 代码审查%s（%s）\n", titleWord, start.Format("2006-01-02"))
+	md := fmt.Sprintf("## 📝 团队工作%s（%s）\n", titleWord, start.Format("2006-01-02"))
 	md += fmt.Sprintf("**统计周期**：%s（北京时间）\n", period)
 
 	if t.ReviewCount == 0 {
@@ -236,38 +238,58 @@ func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, revi
 		return md
 	}
 
-	md += fmt.Sprintf("> 审查 **%d** 次：✅ %d 成功 ｜ ❌ %d 失败\n",
-		t.ReviewCount, t.Succeeded, t.Failed)
-	md += fmt.Sprintf("> 重点问题 **%d** 个：🔴 critical %d ｜ 🟠 high %d\n",
-		t.Critical+t.High, t.Critical, t.High)
+	md += fmt.Sprintf("> 本期完成审查 **%d** 次：✅ %d 成功 ｜ ❌ %d 失败；重点问题 🔴 %d / 🟠 %d\n",
+		t.ReviewCount, t.Succeeded, t.Failed, t.Critical, t.High)
 
-	if len(reviews) > 0 {
-		md += "\n**📋 审查记录**\n"
-		for i, r := range reviews {
-			subject := r.Title
-			if subject == "" {
-				subject = r.Ref
+	// 工作内容：按作者分组（保持首次出现顺序），失败审查单列。
+	groups := map[string][]ReportReview{}
+	var order []string
+	var failed []ReportReview
+	for _, r := range reviews {
+		if r.Status != "succeeded" {
+			failed = append(failed, r)
+			continue
+		}
+		who := strings.TrimSpace(r.Author)
+		if who == "" {
+			who = "—"
+		}
+		if _, ok := groups[who]; !ok {
+			order = append(order, who)
+		}
+		groups[who] = append(groups[who], r)
+	}
+
+	if len(order) > 0 {
+		md += "\n**🧑‍💻 工作内容**\n"
+		shown := 0
+		for _, who := range order {
+			md += fmt.Sprintf("\n**%s**\n", who)
+			for _, r := range groups[who] {
+				subject := truncateRune(firstNonEmpty(r.Title, r.Ref), 42)
+				line := fmt.Sprintf("- ✅ [%s] %s", r.Repo, subject)
+				if desc := truncateRune(r.Desc, 70); desc != "" {
+					line += "：" + desc
+				}
+				line += fmt.Sprintf("（<font color=\"%s\">**%d**</font> 分）\n", scoreColor(r.Score), r.Score)
+				md += line
+				shown++
 			}
-			subject = truncateRune(subject, 50)
+		}
+		if hidden := t.Succeeded - int64(shown); hidden > 0 {
+			md += fmt.Sprintf("\n_…另有 %d 项工作未列出，详见平台。_\n", hidden)
+		}
+	}
+
+	if len(failed) > 0 {
+		md += "\n**❌ 审查失败**\n"
+		for _, r := range failed {
 			commit := r.Commit
 			if len(commit) > 8 {
 				commit = commit[:8]
 			}
-			author := r.Author
-			if strings.TrimSpace(author) == "" {
-				author = "—"
-			}
-			if r.Status == "succeeded" {
-				md += fmt.Sprintf("%d. ✅ **%s** · %s（%s · `%s`）· %s · <font color=\"%s\">**%d**</font> 分\n",
-					i+1, r.Repo, subject, r.Ref, commit, author, scoreColor(r.Score), r.Score)
-			} else {
-				reason := truncateRune(r.Error, 60)
-				md += fmt.Sprintf("%d. ❌ **%s** · %s · `%s` · %s — 失败：%s\n",
-					i+1, r.Repo, r.Ref, commit, author, reason)
-			}
-		}
-		if hidden := t.ReviewCount - int64(len(reviews)); hidden > 0 {
-			md += fmt.Sprintf("\n_…另有 %d 条审查记录，详见平台。_\n", hidden)
+			md += fmt.Sprintf("- [%s] %s `%s`：%s\n",
+				r.Repo, firstNonEmpty(r.Ref, "-"), commit, truncateRune(r.Error, 50))
 		}
 	}
 
@@ -283,13 +305,23 @@ func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, revi
 				who = "（" + f.Author + "）"
 			}
 			md += fmt.Sprintf("- %s **[%s]** `%s` %s%s\n",
-				mark, f.Repo, f.Location, truncateRune(f.Title, 50), who)
+				mark, f.Repo, f.Location, truncateRune(f.Title, 46), who)
 		}
 		if hidden := t.Critical + t.High - int64(len(findings)); hidden > 0 {
 			md += fmt.Sprintf("\n_…另有 %d 个重点问题，详见平台。_\n", hidden)
 		}
 	}
 	return md
+}
+
+// firstNonEmpty 返回第一个去空白后非空的字符串。
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // truncateRune 按 rune 截断字符串，超长加省略号。

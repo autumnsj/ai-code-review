@@ -94,6 +94,13 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 	}
 
 	names := authorNamer{st: s.st}
+	// 失败审查可能停留在入队时的占位作者 "admin"（真实作者要审查完成才回填），展示为 —。
+	authorOf := func(key string) string {
+		if strings.EqualFold(strings.TrimSpace(key), "admin") {
+			return "—"
+		}
+		return names.name(ctx, key)
+	}
 	reviews := make([]notifier.ReportReview, 0, len(rvs))
 	for _, r := range rvs {
 		reviews = append(reviews, notifier.ReportReview{
@@ -101,7 +108,7 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 			Title:  r.PRTitle,
 			Ref:    r.TargetRef,
 			Commit: r.CommitSHA,
-			Author: names.name(ctx, r.Author),
+			Author: authorOf(r.Author),
 			Score:  r.ScoreTotal,
 			Status: r.Status,
 			Error:  r.Error,
@@ -199,7 +206,7 @@ type authorNamer struct {
 func (n *authorNamer) name(ctx context.Context, key string) string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {
-		return "未知"
+		return ""
 	}
 	if n.cache != nil {
 		if v, ok := n.cache[key]; ok {

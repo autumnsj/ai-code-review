@@ -253,13 +253,17 @@ func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, revi
 			if len(commit) > 8 {
 				commit = commit[:8]
 			}
+			author := r.Author
+			if strings.TrimSpace(author) == "" {
+				author = "—"
+			}
 			if r.Status == "succeeded" {
 				md += fmt.Sprintf("%d. ✅ **%s** · %s（%s · `%s`）· %s · <font color=\"%s\">**%d**</font> 分\n",
-					i+1, r.Repo, subject, r.Ref, commit, r.Author, scoreColor(r.Score), r.Score)
+					i+1, r.Repo, subject, r.Ref, commit, author, scoreColor(r.Score), r.Score)
 			} else {
 				reason := truncateRune(r.Error, 60)
 				md += fmt.Sprintf("%d. ❌ **%s** · %s · `%s` · %s — 失败：%s\n",
-					i+1, r.Repo, r.Ref, commit, r.Author, reason)
+					i+1, r.Repo, r.Ref, commit, author, reason)
 			}
 		}
 		if hidden := t.ReviewCount - int64(len(reviews)); hidden > 0 {

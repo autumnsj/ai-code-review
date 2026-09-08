@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -52,116 +53,169 @@ func NewService(st *store.Store, d *notifier.Dispatcher, log *zap.Logger) *Servi
 	return &Service{st: st, dispatcher: d, log: log}
 }
 
-// HandleJob 满足 queue.Handler：解析 payload → 聚合 → 推送。
-// 渠道级失败只记日志（Dispatcher 内部处理），job 始终成功——
-// 推送失败不应触发队列重试导致群里刷屏。
+// personReport 一位成员在本周期内的考核数据（一人一份报告）。
+type personReport struct {
+	name     string
+	reviews  []notifier.ReportReview
+	findings []notifier.ReportFinding
+}
+
+// reportData 一个周期聚合出的全部报告素材：按人分组的个人报告 + 团队级异常。
+type reportData struct {
+	persons []personReport // 按展示名排序
+	failed  []notifier.ReportReview
+	orphans []notifier.ReportFinding // 无法 blame 到具体成员的重点问题
+	hasAny  bool                     // 窗口内是否有任何审查（含失败）
+}
+
+// HandleJob 满足 queue.Handler：解析 payload → 按人聚合 → 逐人落库并推送。
+// 报告以人为单位（考核个人）：每位有产出的成员一条独立消息、一条独立记录；
+// 单人落库/推送失败只记日志不影响其他人，job 整体成功，避免重试导致已发送的人重复收到
+// （(job_id,author) 唯一约束兜底）。
 func (s *Service) HandleJob(ctx context.Context, job *domain.Job) error {
 	var p JobPayload
 	if err := json.Unmarshal([]byte(job.Payload), &p); err != nil {
 		return fmt.Errorf("parse report payload: %w", err)
 	}
-	title, md, err := s.build(ctx, p)
+	data, err := s.aggregate(ctx, p)
 	if err != nil {
 		return err
 	}
-	// 先落库后推送：落库失败则返回错误让 job 重试（此时尚未推送，重试安全）；
-	// job_id 唯一约束兜底，同一 job 重试不会产生重复报告。
+	loc := Location()
+	start, end := p.PeriodStart.In(loc), p.PeriodEnd.In(loc)
+	word := "日报"
+	if p.Kind == KindWeekly {
+		word = "周报"
+	}
+	suffix := ""
+	if p.Manual {
+		suffix = "（手动发送）"
+	}
 	trigger := "scheduled"
 	if p.Manual {
 		trigger = "manual"
 	}
-	if err := s.st.CreateReport(ctx, store.CreateReportInput{
-		Kind:        p.Kind,
-		TriggerType: trigger,
-		PeriodStart: p.PeriodStart,
-		PeriodEnd:   p.PeriodEnd,
-		Title:       title,
-		Content:     md,
-		JobID:       job.ID,
-	}); err != nil {
-		return fmt.Errorf("persist report: %w", err)
+
+	persistAndSend := func(author, title, md string) {
+		if err := s.st.CreateReport(ctx, store.CreateReportInput{
+			Kind: p.Kind, TriggerType: trigger, Author: author,
+			PeriodStart: p.PeriodStart, PeriodEnd: p.PeriodEnd,
+			Title: title, Content: md, JobID: job.ID,
+		}); err != nil {
+			s.log.Warn("report: persist", zap.String("author", author), zap.Error(err))
+			return
+		}
+		s.dispatcher.SendMarkdown(ctx, title, md)
 	}
-	s.dispatcher.SendMarkdown(ctx, title, md)
-	s.log.Info("report sent", zap.String("kind", p.Kind),
-		zap.Time("period_start", p.PeriodStart), zap.Time("period_end", p.PeriodEnd),
-		zap.Bool("manual", p.Manual))
+
+	if !data.hasAny {
+		md := notifier.BuildTeamNoticeMarkdown(p.Kind, start, end, nil, nil, false)
+		persistAndSend("", "团队工作"+word+suffix, md)
+		s.log.Info("report sent (empty)", zap.String("kind", p.Kind))
+		return nil
+	}
+
+	for _, person := range data.persons {
+		md := notifier.BuildPersonalReportMarkdown(p.Kind, start, end, person.name, person.reviews, person.findings)
+		persistAndSend(person.name, person.name+" · 工作"+word+suffix, md)
+	}
+	if notice := notifier.BuildTeamNoticeMarkdown(p.Kind, start, end, data.failed, data.orphans, true); notice != "" {
+		persistAndSend("", "工作"+word+" · 异常提醒"+suffix, notice)
+	}
+	s.log.Info("report sent", zap.String("kind", p.Kind), zap.Int("persons", len(data.persons)))
 	return nil
 }
 
-// Build 按类型与当前时间计算窗口并生成报告（管理端预览用）。
+// Build 管理端预览：把全员个人报告拼接成一份 markdown（实际推送为每人一条独立消息），不落库。
 func (s *Service) Build(ctx context.Context, kind string, now time.Time) (title, markdown string, start, end time.Time, err error) {
 	start, end = Period(kind, now)
 	p := JobPayload{Kind: kind, PeriodStart: start, PeriodEnd: end, Manual: true}
-	title, markdown, err = s.build(ctx, p)
+	data, err := s.aggregate(ctx, p)
+	if err != nil {
+		return
+	}
+	loc := Location()
+	st, en := start.In(loc), end.In(loc)
+	word := "日报"
+	if kind == KindWeekly {
+		word = "周报"
+	}
+	var parts []string
+	if !data.hasAny {
+		parts = append(parts, notifier.BuildTeamNoticeMarkdown(kind, st, en, nil, nil, false))
+	} else {
+		for _, person := range data.persons {
+			parts = append(parts, notifier.BuildPersonalReportMarkdown(kind, st, en, person.name, person.reviews, person.findings))
+		}
+		if notice := notifier.BuildTeamNoticeMarkdown(kind, st, en, data.failed, data.orphans, true); notice != "" {
+			parts = append(parts, notice)
+		}
+	}
+	title = "团队工作" + word + "（预览）"
+	markdown = "> 预览为全员拼接；实际推送时每位成员各收到一条独立的个人报告。\n\n" + strings.Join(parts, "\n---\n")
 	return
 }
 
-func (s *Service) build(ctx context.Context, p JobPayload) (string, string, error) {
-	totals, err := s.st.ReportRangeStats(ctx, p.PeriodStart, p.PeriodEnd)
-	if err != nil {
-		return "", "", fmt.Errorf("load report totals: %w", err)
-	}
+// aggregate 加载窗口内的审查与重点问题，按成员（小写 email）分组归属。
+func (s *Service) aggregate(ctx context.Context, p JobPayload) (*reportData, error) {
 	rvs, err := s.st.ListReviewsInRange(ctx, p.PeriodStart, p.PeriodEnd, maxReviews)
 	if err != nil {
-		return "", "", fmt.Errorf("load reviews in range: %w", err)
+		return nil, fmt.Errorf("load reviews in range: %w", err)
 	}
 	fs, err := s.st.ListTopFindingsInRange(ctx, p.PeriodStart, p.PeriodEnd, maxFindings)
 	if err != nil {
-		return "", "", fmt.Errorf("load findings in range: %w", err)
+		return nil, fmt.Errorf("load findings in range: %w", err)
 	}
-
 	names := authorNamer{st: s.st}
-	// 失败审查可能停留在入队时的占位作者 "admin"（真实作者要审查完成才回填），展示为 —。
-	authorOf := func(key string) string {
-		if strings.EqualFold(strings.TrimSpace(key), "admin") {
-			return "—"
-		}
-		return names.name(ctx, key)
-	}
-	reviews := make([]notifier.ReportReview, 0, len(rvs))
+
+	data := &reportData{hasAny: len(rvs) > 0}
+	personIdx := map[string]int{} // 作者 key（小写 email）→ persons 下标
 	for _, r := range rvs {
-		reviews = append(reviews, notifier.ReportReview{
+		rv := notifier.ReportReview{
 			Repo:   r.RepoName,
 			Title:  r.FeatureTitle(),
 			Desc:   firstSentence(r.Summary),
 			Ref:    r.TargetRef,
 			Commit: r.CommitSHA,
-			Author: authorOf(r.Author),
 			Score:  r.ScoreTotal,
 			Status: r.Status,
 			Error:  r.Error,
-		})
+		}
+		if r.Status != "succeeded" {
+			data.failed = append(data.failed, rv)
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(r.Author))
+		// 占位 admin/空作者无法归属到具体成员，不进个人考核报告（平台审查记录可查）。
+		if key == "" || strings.EqualFold(key, "admin") {
+			continue
+		}
+		idx, ok := personIdx[key]
+		if !ok {
+			idx = len(data.persons)
+			personIdx[key] = idx
+			data.persons = append(data.persons, personReport{name: names.name(ctx, key)})
+		}
+		data.persons[idx].reviews = append(data.persons[idx].reviews, rv)
 	}
-	findings := make([]notifier.ReportFinding, 0, len(fs))
 	for _, f := range fs {
-		findings = append(findings, notifier.ReportFinding{
+		ff := notifier.ReportFinding{
 			Repo:     f.RepoName,
 			Severity: f.Severity,
 			Location: shortLocation(f.FilePath, f.LineStart),
 			Title:    f.Title,
-			Author:   names.name(ctx, f.Author),
-		})
+		}
+		key := strings.ToLower(strings.TrimSpace(f.Author))
+		if key != "" {
+			if idx, ok := personIdx[key]; ok {
+				data.persons[idx].findings = append(data.persons[idx].findings, ff)
+				continue
+			}
+		}
+		data.orphans = append(data.orphans, ff)
 	}
-
-	loc := Location()
-	md := notifier.BuildReportMarkdown(p.Kind, p.PeriodStart.In(loc), p.PeriodEnd.In(loc),
-		notifier.ReportTotals{
-			ReviewCount: totals.ReviewCount,
-			Succeeded:   totals.Succeeded,
-			Failed:      totals.Failed,
-			Critical:    totals.Critical,
-			High:        totals.High,
-		},
-		reviews, findings)
-
-	title := "团队工作日报"
-	if p.Kind == KindWeekly {
-		title = "团队工作周报"
-	}
-	if p.Manual {
-		title += "（手动发送）"
-	}
-	return title, md, nil
+	sort.Slice(data.persons, func(i, j int) bool { return data.persons[i].name < data.persons[j].name })
+	return data, nil
 }
 
 // Config 读取调度配置；缺省/损坏时返回归一化默认（默认全关）。

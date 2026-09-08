@@ -474,7 +474,7 @@ function ScheduledReportsPane() {
         ]}
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-          以下为当前时间对应统计周期的报告内容，「确认发送」将立即推送到所有启用的通知渠道。
+          报告以<b>人</b>为单位：以下为全员拼接预览，实际发送时<b>每位成员各收到一条只含本人工作的独立报告</b>（推送到所有启用渠道），「确认发送」立即执行。
         </Typography.Paragraph>
         <div
           style={{

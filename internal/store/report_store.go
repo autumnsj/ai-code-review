@@ -117,48 +117,56 @@ func (s *Store) ListTopFindingsInRange(ctx context.Context, since, until time.Ti
 type CreateReportInput struct {
 	Kind        string    // daily | weekly
 	TriggerType string    // scheduled | manual
+	Author      string    // 个人报告的成员展示名；空串 = 团队简报/异常提醒
 	PeriodStart time.Time // 统计窗口（北京时间）
 	PeriodEnd   time.Time
 	Title       string
 	Content     string // markdown 正文
-	JobID       int64  // 关联 jobs.id，唯一约束防重试重复落库
+	JobID       int64  // 关联 jobs.id；(job_id, author) 唯一，防重试重复落库
 }
 
-// CreateReport 插入一条报告记录。job_id 唯一：同一 job 失败重试时冲突忽略。
+// CreateReport 插入一条报告记录。(job_id, author) 唯一：同一 job 重试时同人冲突忽略。
 func (s *Store) CreateReport(ctx context.Context, in CreateReportInput) error {
 	var query string
 	switch s.drv {
 	case DriverMySQL:
-		query = `INSERT INTO reports(kind, trigger_type, period_start, period_end, title, content, job_id)
-			VALUES(?, ?, ?, ?, ?, ?, ?)
+		query = `INSERT INTO reports(kind, trigger_type, author, period_start, period_end, title, content, job_id)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE id=id`
 	default:
-		query = `INSERT INTO reports(kind, trigger_type, period_start, period_end, title, content, job_id)
-			VALUES(?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(job_id) DO NOTHING`
+		query = `INSERT INTO reports(kind, trigger_type, author, period_start, period_end, title, content, job_id)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(job_id, author) DO NOTHING`
 	}
 	_, err := s.db.ExecContext(ctx, s.rebind(query),
-		in.Kind, in.TriggerType, in.PeriodStart, in.PeriodEnd, in.Title, in.Content, in.JobID)
+		in.Kind, in.TriggerType, in.Author, in.PeriodStart, in.PeriodEnd, in.Title, in.Content, in.JobID)
 	return err
 }
 
-// ListReports 分页返回报告记录（按生成时间倒序），不含 content 正文；total 为总数。
-func (s *Store) ListReports(ctx context.Context, limit, offset int) ([]*domain.Report, int, error) {
+// ListReports 分页返回报告记录（按生成时间倒序），不含 content 正文；author 非空时只返回该成员。
+func (s *Store) ListReports(ctx context.Context, author string, limit, offset int) ([]*domain.Report, int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	if limit > 100 {
 		limit = 100
 	}
+	where := ""
+	args := []any{}
+	if author != "" {
+		where = " WHERE author = ?"
+		args = append(args, author)
+	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, s.rebind(`SELECT COUNT(*) FROM reports`+where), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT id, kind, trigger_type, period_start, period_end, title, job_id, created_at
-		FROM reports
+		SELECT id, kind, trigger_type, author, period_start, period_end, title, job_id, created_at
+		FROM reports`+where+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT ? OFFSET ?`), limit, offset)
+		LIMIT ? OFFSET ?`), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -166,7 +174,7 @@ func (s *Store) ListReports(ctx context.Context, limit, offset int) ([]*domain.R
 	var out []*domain.Report
 	for rows.Next() {
 		var r domain.Report
-		if err := rows.Scan(&r.ID, &r.Kind, &r.TriggerType, &r.PeriodStart, &r.PeriodEnd,
+		if err := rows.Scan(&r.ID, &r.Kind, &r.TriggerType, &r.Author, &r.PeriodStart, &r.PeriodEnd,
 			&r.Title, &r.JobID, &r.CreatedAt); err != nil {
 			return nil, 0, err
 		}
@@ -179,9 +187,9 @@ func (s *Store) ListReports(ctx context.Context, limit, offset int) ([]*domain.R
 func (s *Store) GetReport(ctx context.Context, id int64) (*domain.Report, error) {
 	var r domain.Report
 	err := s.db.QueryRowContext(ctx, s.rebind(`
-		SELECT id, kind, trigger_type, period_start, period_end, title, content, job_id, created_at
+		SELECT id, kind, trigger_type, author, period_start, period_end, title, content, job_id, created_at
 		FROM reports WHERE id = ?`), id).
-		Scan(&r.ID, &r.Kind, &r.TriggerType, &r.PeriodStart, &r.PeriodEnd,
+		Scan(&r.ID, &r.Kind, &r.TriggerType, &r.Author, &r.PeriodStart, &r.PeriodEnd,
 			&r.Title, &r.Content, &r.JobID, &r.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound

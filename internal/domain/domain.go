@@ -396,6 +396,7 @@ type Report struct {
 	ID          int64     `json:"id"`
 	Kind        string    `json:"kind"`         // daily | weekly
 	TriggerType string    `json:"trigger_type"` // scheduled | manual
+	Author      string    `json:"author"`       // 个人报告的成员展示名；空串 = 团队简报/异常提醒
 	PeriodStart time.Time `json:"period_start"`
 	PeriodEnd   time.Time `json:"period_end"`
 	Title       string    `json:"title"`

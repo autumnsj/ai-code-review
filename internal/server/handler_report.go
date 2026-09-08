@@ -84,7 +84,7 @@ func (s *Server) listReportRecords(c *gin.Context) {
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
-	items, total, err := s.store.ListReports(c.Request.Context(), pageSize, (page-1)*pageSize)
+	items, total, err := s.store.ListReports(c.Request.Context(), c.Query("author"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

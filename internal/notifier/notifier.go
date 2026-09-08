@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -187,15 +188,6 @@ func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findin
 	return md
 }
 
-// ReportTotals 定时报告一个统计周期内的计数总览。
-type ReportTotals struct {
-	ReviewCount int64
-	Succeeded   int64
-	Failed      int64
-	Critical    int64 // 重点问题：critical 数
-	High        int64 // 重点问题：high 数
-}
-
 // ReportReview 日报/周报工作清单中的一条审查。
 // Author 为已格式化的展示名；Title 为功能标题（PR 标题/commit 标题，空时回退分支）；
 // Desc 为功能概述（AI summary 首句，可空）。
@@ -221,66 +213,82 @@ type ReportFinding struct {
 	Author   string
 }
 
-// BuildReportMarkdown 生成定时日报/周报的 markdown。窗口为 [start, end)（北京时间），
-// kind 为 "daily" 或 "weekly"。报告定位是「代替员工写工作日报」：主体为按作者分组的
-// 工作内容（做了什么功能），其后附重点问题（critical/high）与失败审查。
-func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, reviews []ReportReview, findings []ReportFinding) string {
-	titleWord, period := "日报", start.Format("2006-01-02")+"（全天）"
+// reportPeriod 返回报告类型对应的中文词与统计周期文案（窗口 [start, end)，北京时间）。
+func reportPeriod(kind string, start, end time.Time) (word, period string) {
+	word, period = "日报", start.Format("2006-01-02")+"（全天）"
 	if kind == "weekly" {
-		titleWord = "周报"
+		word = "周报"
 		period = start.Format("2006-01-02") + " ～ " + end.AddDate(0, 0, -1).Format("2006-01-02")
 	}
-	md := fmt.Sprintf("## 📝 团队工作%s（%s）\n", titleWord, start.Format("2006-01-02"))
+	return word, period
+}
+
+// BuildPersonalReportMarkdown 生成某位成员的个人工作日报/周报（考核对人、一人一份）。
+// reviews/findings 均已归属到该成员：功能清单 + 其名下重点问题，不含他人内容。
+func BuildPersonalReportMarkdown(kind string, start, end time.Time, author string, reviews []ReportReview, findings []ReportFinding) string {
+	word, period := reportPeriod(kind, start, end)
+	md := fmt.Sprintf("## 📝 %s 的工作%s（%s）\n", author, word, start.Format("2006-01-02"))
 	md += fmt.Sprintf("**统计周期**：%s（北京时间）\n", period)
 
-	if t.ReviewCount == 0 {
-		md += "\n本周期暂无代码审查记录。\n"
-		return md
+	n := len(reviews)
+	avg := 0
+	if n > 0 {
+		sum := 0
+		for _, r := range reviews {
+			sum += r.Score
+		}
+		avg = int(math.Round(float64(sum) / float64(n)))
 	}
+	crit, high := 0, 0
+	for _, f := range findings {
+		if f.Severity == "critical" {
+			crit++
+		} else {
+			high++
+		}
+	}
+	md += fmt.Sprintf("> 本期完成 **%d** 个功能，平均 <font color=\"%s\">**%d**</font> 分；重点问题 🔴 %d / 🟠 %d\n",
+		n, scoreColor(avg), avg, crit, high)
 
-	md += fmt.Sprintf("> 本期完成审查 **%d** 次：✅ %d 成功 ｜ ❌ %d 失败；重点问题 🔴 %d / 🟠 %d\n",
-		t.ReviewCount, t.Succeeded, t.Failed, t.Critical, t.High)
-
-	// 工作内容：按作者分组（保持首次出现顺序），失败审查单列。
-	groups := map[string][]ReportReview{}
-	var order []string
-	var failed []ReportReview
+	md += "\n**🧑‍💻 本期完成功能**\n"
 	for _, r := range reviews {
-		if r.Status != "succeeded" {
-			failed = append(failed, r)
-			continue
+		subject := truncateRune(firstNonEmpty(r.Title, r.Ref), 42)
+		line := fmt.Sprintf("- ✅ [%s] %s", r.Repo, subject)
+		if desc := truncateRune(r.Desc, 70); desc != "" {
+			line += "：" + desc
 		}
-		who := strings.TrimSpace(r.Author)
-		if who == "" {
-			who = "—"
-		}
-		if _, ok := groups[who]; !ok {
-			order = append(order, who)
-		}
-		groups[who] = append(groups[who], r)
+		line += fmt.Sprintf("（<font color=\"%s\">**%d**</font> 分）\n", scoreColor(r.Score), r.Score)
+		md += line
 	}
 
-	if len(order) > 0 {
-		md += "\n**🧑‍💻 工作内容**\n"
-		shown := 0
-		for _, who := range order {
-			md += fmt.Sprintf("\n**%s**\n", who)
-			for _, r := range groups[who] {
-				subject := truncateRune(firstNonEmpty(r.Title, r.Ref), 42)
-				line := fmt.Sprintf("- ✅ [%s] %s", r.Repo, subject)
-				if desc := truncateRune(r.Desc, 70); desc != "" {
-					line += "：" + desc
-				}
-				line += fmt.Sprintf("（<font color=\"%s\">**%d**</font> 分）\n", scoreColor(r.Score), r.Score)
-				md += line
-				shown++
+	if len(findings) > 0 {
+		md += "\n**🚨 需关注的重点问题**\n"
+		for _, f := range findings {
+			mark := "🟠"
+			if f.Severity == "critical" {
+				mark = "🔴"
 			}
-		}
-		if hidden := t.Succeeded - int64(shown); hidden > 0 {
-			md += fmt.Sprintf("\n_…另有 %d 项工作未列出，详见平台。_\n", hidden)
+			md += fmt.Sprintf("- %s **[%s]** `%s` %s\n", mark, f.Repo, f.Location, truncateRune(f.Title, 46))
 		}
 	}
+	return md
+}
 
+// BuildTeamNoticeMarkdown 生成团队级简报/异常提醒（不归属任何个人考核报告）。
+// hasAnyReview=false（窗口内一条审查都没有）→ 存活简报；有失败审查或无主重点问题
+// （无法 blame 到作者）→ 异常提醒；都没有则返回空串表示无需发送。
+func BuildTeamNoticeMarkdown(kind string, start, end time.Time, failed []ReportReview, orphanFindings []ReportFinding, hasAnyReview bool) string {
+	word, period := reportPeriod(kind, start, end)
+	periodLine := fmt.Sprintf("**统计周期**：%s（北京时间）\n", period)
+
+	if !hasAnyReview {
+		return fmt.Sprintf("## 📝 团队工作%s（%s）\n%s\n本周期暂无代码审查记录。\n",
+			word, start.Format("2006-01-02"), periodLine)
+	}
+	if len(failed) == 0 && len(orphanFindings) == 0 {
+		return ""
+	}
+	md := fmt.Sprintf("## ⚠️ 工作%s · 本期异常提醒（%s）\n%s\n", word, start.Format("2006-01-02"), periodLine)
 	if len(failed) > 0 {
 		md += "\n**❌ 审查失败**\n"
 		for _, r := range failed {
@@ -292,23 +300,14 @@ func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, revi
 				r.Repo, firstNonEmpty(r.Ref, "-"), commit, truncateRune(r.Error, 50))
 		}
 	}
-
-	if len(findings) > 0 {
-		md += "\n**🚨 重点问题**\n"
-		for _, f := range findings {
+	if len(orphanFindings) > 0 {
+		md += "\n**🚨 未归属责任人的重点问题**\n"
+		for _, f := range orphanFindings {
 			mark := "🟠"
 			if f.Severity == "critical" {
 				mark = "🔴"
 			}
-			who := ""
-			if f.Author != "" {
-				who = "（" + f.Author + "）"
-			}
-			md += fmt.Sprintf("- %s **[%s]** `%s` %s%s\n",
-				mark, f.Repo, f.Location, truncateRune(f.Title, 46), who)
-		}
-		if hidden := t.Critical + t.High - int64(len(findings)); hidden > 0 {
-			md += fmt.Sprintf("\n_…另有 %d 个重点问题，详见平台。_\n", hidden)
+			md += fmt.Sprintf("- %s **[%s]** `%s` %s\n", mark, f.Repo, f.Location, truncateRune(f.Title, 46))
 		}
 	}
 	return md

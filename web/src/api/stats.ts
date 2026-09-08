@@ -31,6 +31,8 @@ export interface AuthorDetail {
     title: string
     repo_name: string
     score_total: number
+    additions: number
+    deletions: number
     finished_at?: string | null
   }>
 }

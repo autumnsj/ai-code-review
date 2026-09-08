@@ -28,12 +28,22 @@ interface MetricDef {
   hint?: string
 }
 
-// 功能产出视角：看每人完成了多少功能、带出多少问题（代码行数不代表功能价值，不做排行）。
-const CODE_METRICS: MetricDef[] = [
+// 功能产出：看每人完成了多少功能、带出多少问题。
+const OUTPUT_METRICS: MetricDef[] = [
   { key: 'review_count', label: '完成功能', hint: '成功交付的审查/PR 数',
     value: (a) => a.review_count, format: (v) => v.toLocaleString(), color: '#722ed1' },
   { key: 'findings_total', label: '问题数量',
     value: (a) => a.findings_total, format: (v) => v.toLocaleString(), color: '#fa8c16' },
+]
+
+// 代码量：工作量的硬指标（新增/删除/总改动行数）。
+const CHURN_METRICS: MetricDef[] = [
+  { key: 'churn', label: '总代码量', hint: '新增 + 删除行数',
+    value: (a) => a.churn, format: (v) => v.toLocaleString(), color: '#1677ff' },
+  { key: 'additions', label: '新增行数',
+    value: (a) => a.additions, format: (v) => '+' + v.toLocaleString(), color: '#52c41a' },
+  { key: 'deletions', label: '删除行数',
+    value: (a) => a.deletions, format: (v) => '-' + v.toLocaleString(), color: '#ff4d4f' },
 ]
 
 const SCORE_METRICS: MetricDef[] = [
@@ -147,7 +157,8 @@ export default function LeaderboardPage() {
       <Spin spinning={isLoading}>
         {boards ? (
           <>
-            {renderGroup('功能产出', CODE_METRICS)}
+            {renderGroup('功能产出', OUTPUT_METRICS)}
+            {renderGroup('代码量', CHURN_METRICS)}
             {renderGroup('评分（越高越好）', SCORE_METRICS)}
           </>
         ) : (

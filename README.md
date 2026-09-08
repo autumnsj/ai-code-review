@@ -14,7 +14,7 @@
 - 📊 **质量报告**：评分环、维度明细、问题列表（严重度 / 文件 / 片段 / 建议）、公开免登录报告页
 - 🔔 **通知推送**：企业微信 / 飞书 / 钉钉，支持加签，含报告直达链接
 - 🛠️ **管理后台**：仓库管理、审查记录、任务队列（失败重试）、手动触发审查、概览仪表盘
-- 🏆 **作者维度看板**：按作者聚合「完成功能数」、四维均分、问题严重度分布（不以代码行数论英雄），作者抽屉含「最近完成功能」台账（PR/commit 功能标题），支持时间/仓库筛选与排行
+- 🏆 **作者维度看板**：按作者聚合完成功能数、代码量（+/-）、四维均分、问题严重度分布，作者抽屉含「最近完成功能」台账（PR/commit 功能标题 + 行数变动），支持时间/仓库筛选与排行
 - 🔁 **可靠异步**：数据库任务队列，租约 + 心跳 + 指数退避重试 + 幂等
 - 🔒 **安全**：webhook 签名校验、仓库来源校验、不可枚举的公开 token、非 root 容器、禁执行仓库 git hooks
 
@@ -232,7 +232,7 @@ COMPOSE_DIR=/opt/aicr \
 - `GET /reviews`、`GET /reviews/:id`、`GET /reviews/:id/findings`
 - `GET /jobs`、`POST /jobs/:id/retry`
 - `GET /dashboard`
-- `GET /stats/leaderboard?days=30&repo_id=&limit=10` —— 多指标排行榜（完成功能数/问题数 + 综合及四维均分），各取 Top N 一次返回；`GET /stats/authors/:author` 详情含 `recent[].title` 功能标题（`domain.Review.FeatureTitle()`：PR 标题→commit 标题→分支）
+- `GET /stats/leaderboard?days=30&repo_id=&limit=10` —— 多指标排行榜（完成功能数/问题数/代码量 churn/新增/删除 + 综合及四维均分），各取 Top N 一次返回；`GET /stats/authors/:author` 详情含 `recent[].title` 功能标题（`domain.Review.FeatureTitle()`：PR 标题→commit 标题→分支）与行数变动
 - `GET /stats/authors?days=30&repo_id=&sort=avg_score&page=1&page_size=50` —— 作者维度聚合（审查次数、四维均分、增删行合计、问题严重度计数）
 - `GET /stats/authors/:author?days=30&repo_id=` —— 单作者明细（维度均分 + 最近审查）
 
@@ -294,7 +294,7 @@ COMPOSE_DIR=/opt/aicr \
 | 审查记录 / 报告 | `pages/reviews/index.tsx`、`pages/reviews/detail.tsx`（含 `ReviewLogPanel.tsx`：2s 增量轮询 `/reviews/:id/log`，终端样式实时展示 AI 进度，上滚暂停自动跟随；多作者审查展示「作者报告」表，各人评分/问题数/改动量与个人公开报告链接）、`pages/public/report.tsx`（整体免登录公开页）、`pages/public/authorReport.tsx`（按作者拆分的个人公开页 `/author-reports/:token`）、`api/reviews.ts`（`dimensionRows`、`AuthorReport`、`authorReports`/`publicAuthorGet`、`logs`/`ReviewLog`） |
 | 任务队列 | `pages/jobs/index.tsx`（类型列区分代码审查/定时报告）、`api/ops.ts` |
 | 报告记录 | `pages/reports/index.tsx`（已发送日报/周报列表：类型/统计周期/触发方式/生成时间，Modal 查看 markdown 正文）、`api/reports.ts`；侧边栏「报告记录」菜单 |
-| 作者维度看板 | `pages/stats/authors.tsx`（真名 / @login / 团队展示；作者抽屉「最近完成功能」台账：功能标题/仓库/评分/时间）、`pages/stats/leaderboard.tsx`（单页多榜柱形图：完成功能数/问题数 + 各维度评分，不排代码行数，CSS 横向柱、奖牌排名，支持时间/仓库筛选）、`api/stats.ts`（`leaderboard`） |
+| 作者维度看板 | `pages/stats/authors.tsx`（真名 / @login / 团队展示；主表含完成功能数与代码量 +/-；作者抽屉「最近完成功能」台账：功能标题/仓库/评分/行数变动/时间）、`pages/stats/leaderboard.tsx`（单页多榜柱形图：功能产出（完成功能/问题数）+ 代码量（总量/新增/删除）+ 各维度评分，CSS 横向柱、奖牌排名，支持时间/仓库筛选）、`api/stats.ts`（`leaderboard`） |
 | 成员备注 | `pages/members/index.tsx`（CRUD + 未备注账号快捷添加）、`api/members.ts` |
 | 可复用凭据库 | `pages/credentials/index.tsx`（含所属平台 / API 地址字段）、`api/credentials.ts` |
 | 设置（AI 模型 / 通知 / 定时报告 / 服务 / 安全 / 打分维度） | `pages/settings/index.tsx`（「打分维度」Tab，`Form.List` 自定义维度；「定时报告」Tab：日报/周报开关 + 北京时间 TimePicker + 周几选择，预览 Modal 展示 markdown 并可确认立即发送）、`api/settings.ts`（`getReportSchedules`/`updateReportSchedules`/`previewReport`/`runReport`） |

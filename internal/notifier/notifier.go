@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -188,36 +187,42 @@ func BuildAuthorMarkdown(r *domain.Review, ar *domain.ReviewAuthorReport, findin
 	return md
 }
 
-// ReportTotals 定时报告一个统计周期内的总览指标。
+// ReportTotals 定时报告一个统计周期内的计数总览。
 type ReportTotals struct {
-	ReviewCount  int64
-	Succeeded    int64
-	Failed       int64
-	AvgScore     float64
-	Additions    int64
-	Deletions    int64
-	FilesChanged int64
-	Critical     int64
-	High         int64
-	Medium       int64
-	Low          int64
+	ReviewCount int64
+	Succeeded   int64
+	Failed      int64
+	Critical    int64 // 重点问题：critical 数
+	High        int64 // 重点问题：high 数
 }
 
-// ReportAuthor 定时报告榜单中的一行作者（Name 已格式化为「真名（账号）」或裸账号）。
-type ReportAuthor struct {
-	Name      string
-	Reviews   int64
-	AvgScore  float64
-	Additions int64
-	Deletions int64
-	Findings  int64
-	Critical  int64
-	High      int64
+// ReportReview 日报/周报「审查记录」清单中的一条审查。
+// Author 为已格式化的展示名；Title 为 PR 标题（空时展示 Ref 分支）。
+type ReportReview struct {
+	Repo   string
+	Title  string
+	Ref    string
+	Commit string
+	Author string
+	Score  int
+	Status string // succeeded | failed
+	Error  string
+}
+
+// ReportFinding 日报/周报「重点问题」清单中的一条（critical/high）。
+// Location 为已截短的「文件:行」；Author 为已格式化的责任人展示名（可空）。
+type ReportFinding struct {
+	Repo     string
+	Severity string
+	Location string
+	Title    string
+	Author   string
 }
 
 // BuildReportMarkdown 生成定时日报/周报的 markdown。窗口为 [start, end)（北京时间），
-// kind 为 "daily" 或 "weekly"；三个榜单分别为评分/代码量/问题数 Top N。
-func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, topScore, topChurn, topFindings []ReportAuthor) string {
+// kind 为 "daily" 或 "weekly"；内容聚焦「审了什么、发现了什么问题」：
+// 审查记录清单（仓库/PR 或分支/提交/作者/评分）+ 重点问题清单（critical/high）。
+func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, reviews []ReportReview, findings []ReportFinding) string {
 	titleWord, period := "日报", start.Format("2006-01-02")+"（全天）"
 	if kind == "weekly" {
 		titleWord = "周报"
@@ -227,65 +232,71 @@ func BuildReportMarkdown(kind string, start, end time.Time, t ReportTotals, topS
 	md += fmt.Sprintf("**统计周期**：%s（北京时间）\n", period)
 
 	if t.ReviewCount == 0 {
-		md += "\n本周期暂无已完成的代码审查记录。\n"
+		md += "\n本周期暂无代码审查记录。\n"
 		return md
 	}
 
-	md += fmt.Sprintf("> 审查 **%s** 次：✅ %s 成功 ｜ ❌ %s 失败\n",
-		formatInt(t.ReviewCount), formatInt(t.Succeeded), formatInt(t.Failed))
-	md += fmt.Sprintf("> 平均综合评分 <font color=\"%s\">**%.1f**</font> ｜ 改动 **+%s / -%s**（%s 个文件）\n",
-		scoreColor(int(t.AvgScore)), t.AvgScore, formatInt(t.Additions), formatInt(t.Deletions), formatInt(t.FilesChanged))
-	md += fmt.Sprintf("> 发现问题 **%s** 个：critical %s ｜ high %s ｜ medium %s ｜ low %s\n",
-		formatInt(t.Critical+t.High+t.Medium+t.Low),
-		formatInt(t.Critical), formatInt(t.High), formatInt(t.Medium), formatInt(t.Low))
+	md += fmt.Sprintf("> 审查 **%d** 次：✅ %d 成功 ｜ ❌ %d 失败\n",
+		t.ReviewCount, t.Succeeded, t.Failed)
+	md += fmt.Sprintf("> 重点问题 **%d** 个：🔴 critical %d ｜ 🟠 high %d\n",
+		t.Critical+t.High, t.Critical, t.High)
 
-	if len(topScore) > 0 {
-		md += "\n**🏆 综合评分 Top " + itoa(len(topScore)) + "**\n"
-		for i, a := range topScore {
-			md += fmt.Sprintf("%d. %s：**%.1f** 分（%s 次审查）\n", i+1, a.Name, a.AvgScore, formatInt(a.Reviews))
-		}
-	}
-	if len(topChurn) > 0 {
-		md += "\n**💻 代码量 Top " + itoa(len(topChurn)) + "**\n"
-		for i, a := range topChurn {
-			md += fmt.Sprintf("%d. %s：+%s / -%s（%s 次审查）\n",
-				i+1, a.Name, formatInt(a.Additions), formatInt(a.Deletions), formatInt(a.Reviews))
-		}
-	}
-	if len(topFindings) > 0 {
-		md += "\n**🔍 问题数 Top " + itoa(len(topFindings)) + "**\n"
-		for i, a := range topFindings {
-			suffix := ""
-			if a.Critical > 0 || a.High > 0 {
-				suffix = fmt.Sprintf("（critical %s，high %s）", formatInt(a.Critical), formatInt(a.High))
+	if len(reviews) > 0 {
+		md += "\n**📋 审查记录**\n"
+		for i, r := range reviews {
+			subject := r.Title
+			if subject == "" {
+				subject = r.Ref
 			}
-			md += fmt.Sprintf("%d. %s：%s 个%s\n", i+1, a.Name, formatInt(a.Findings), suffix)
+			subject = truncateRune(subject, 50)
+			commit := r.Commit
+			if len(commit) > 8 {
+				commit = commit[:8]
+			}
+			if r.Status == "succeeded" {
+				md += fmt.Sprintf("%d. ✅ **%s** · %s（%s · `%s`）· %s · <font color=\"%s\">**%d**</font> 分\n",
+					i+1, r.Repo, subject, r.Ref, commit, r.Author, scoreColor(r.Score), r.Score)
+			} else {
+				reason := truncateRune(r.Error, 60)
+				md += fmt.Sprintf("%d. ❌ **%s** · %s · `%s` · %s — 失败：%s\n",
+					i+1, r.Repo, r.Ref, commit, r.Author, reason)
+			}
+		}
+		if hidden := t.ReviewCount - int64(len(reviews)); hidden > 0 {
+			md += fmt.Sprintf("\n_…另有 %d 条审查记录，详见平台。_\n", hidden)
+		}
+	}
+
+	if len(findings) > 0 {
+		md += "\n**🚨 重点问题**\n"
+		for _, f := range findings {
+			mark := "🟠"
+			if f.Severity == "critical" {
+				mark = "🔴"
+			}
+			who := ""
+			if f.Author != "" {
+				who = "（" + f.Author + "）"
+			}
+			md += fmt.Sprintf("- %s **[%s]** `%s` %s%s\n",
+				mark, f.Repo, f.Location, truncateRune(f.Title, 50), who)
+		}
+		if hidden := t.Critical + t.High - int64(len(findings)); hidden > 0 {
+			md += fmt.Sprintf("\n_…另有 %d 个重点问题，详见平台。_\n", hidden)
 		}
 	}
 	return md
 }
 
-// formatInt 千分位格式化整数。
-func formatInt(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	neg := strings.HasPrefix(s, "-")
-	if neg {
-		s = s[1:]
+// truncateRune 按 rune 截断字符串，超长加省略号。
+func truncateRune(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
 	}
-	var out []byte
-	for i := 0; i < len(s); i++ {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			out = append(out, ',')
-		}
-		out = append(out, s[i])
-	}
-	if neg {
-		return "-" + string(out)
-	}
-	return string(out)
+	return string(r[:n]) + "…"
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }
 
 func shortSHA(s string) string {
 	if len(s) > 8 {

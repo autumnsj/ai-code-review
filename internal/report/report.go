@@ -1,7 +1,7 @@
 // Package report 生成并推送定时日报/周报。
 //
-// 报告本身是模板聚合（不调 LLM）：从 reviews / review_author_reports 汇总
-// 统计窗口内的审查次数、平均分、改动量、问题数与作者榜单，经通知渠道广播。
+// 报告聚焦「这个周期审了什么、发现了什么问题」：审查记录清单（仓库/PR 或分支/
+// 提交/作者/评分）与 critical/high 重点问题清单，不做代码行数/排行榜统计。
 // 触发方式有两种：定时调度（cmd/server/reportcron.go，幂等键按周期去重）
 // 与管理端「立即发送」（manual，幂等键按时间戳，允许重复触发）。
 package report
@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -27,7 +28,8 @@ const (
 	// SettingsKey 定时调度配置在 settings 表的键。
 	SettingsKey = "report_schedules"
 
-	topN = 5 // 每个榜单展示的作者数
+	maxReviews  = 15 // 审查记录清单条数上限（企微 markdown 约 4KB，需控总长）
+	maxFindings = 20 // 重点问题清单条数上限
 )
 
 // JobPayload 是 report 类型 job 的 payload。
@@ -82,35 +84,50 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 	if err != nil {
 		return "", "", fmt.Errorf("load report totals: %w", err)
 	}
-	topScore, err := s.topAuthors(ctx, p, "avg_total")
+	rvs, err := s.st.ListReviewsInRange(ctx, p.PeriodStart, p.PeriodEnd, maxReviews)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("load reviews in range: %w", err)
 	}
-	topChurn, err := s.topAuthors(ctx, p, "churn")
+	fs, err := s.st.ListTopFindingsInRange(ctx, p.PeriodStart, p.PeriodEnd, maxFindings)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("load findings in range: %w", err)
 	}
-	topFindings, err := s.topAuthors(ctx, p, "findings_total")
-	if err != nil {
-		return "", "", err
+
+	names := authorNamer{st: s.st}
+	reviews := make([]notifier.ReportReview, 0, len(rvs))
+	for _, r := range rvs {
+		reviews = append(reviews, notifier.ReportReview{
+			Repo:   r.RepoName,
+			Title:  r.PRTitle,
+			Ref:    r.TargetRef,
+			Commit: r.CommitSHA,
+			Author: names.name(ctx, r.Author),
+			Score:  r.ScoreTotal,
+			Status: r.Status,
+			Error:  r.Error,
+		})
+	}
+	findings := make([]notifier.ReportFinding, 0, len(fs))
+	for _, f := range fs {
+		findings = append(findings, notifier.ReportFinding{
+			Repo:     f.RepoName,
+			Severity: f.Severity,
+			Location: shortLocation(f.FilePath, f.LineStart),
+			Title:    f.Title,
+			Author:   names.name(ctx, f.Author),
+		})
 	}
 
 	loc := Location()
 	md := notifier.BuildReportMarkdown(p.Kind, p.PeriodStart.In(loc), p.PeriodEnd.In(loc),
 		notifier.ReportTotals{
-			ReviewCount:  totals.ReviewCount,
-			Succeeded:    totals.Succeeded,
-			Failed:       totals.Failed,
-			AvgScore:     totals.AvgScore,
-			Additions:    totals.Additions,
-			Deletions:    totals.Deletions,
-			FilesChanged: totals.FilesChanged,
-			Critical:     totals.Critical,
-			High:         totals.High,
-			Medium:       totals.Medium,
-			Low:          totals.Low,
+			ReviewCount: totals.ReviewCount,
+			Succeeded:   totals.Succeeded,
+			Failed:      totals.Failed,
+			Critical:    totals.Critical,
+			High:        totals.High,
 		},
-		topScore, topChurn, topFindings)
+		reviews, findings)
 
 	title := "代码审查日报"
 	if p.Kind == KindWeekly {
@@ -120,34 +137,6 @@ func (s *Service) build(ctx context.Context, p JobPayload) (string, string, erro
 		title += "（手动发送）"
 	}
 	return title, md, nil
-}
-
-// topAuthors 取窗口内某一维度的作者榜单。
-func (s *Service) topAuthors(ctx context.Context, p JobPayload, sort string) ([]notifier.ReportAuthor, error) {
-	since, until := p.PeriodStart, p.PeriodEnd
-	rows, err := s.st.ListAuthorStats(ctx, store.AuthorFilter{
-		Since: &since,
-		Until: &until,
-		Sort:  sort,
-		Limit: topN,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("load author ranking %s: %w", sort, err)
-	}
-	out := make([]notifier.ReportAuthor, 0, len(rows))
-	for _, a := range rows {
-		out = append(out, notifier.ReportAuthor{
-			Name:      authorLabel(a.Author, a.DisplayName),
-			Reviews:   a.ReviewCount,
-			AvgScore:  a.AvgTotal,
-			Additions: a.Additions,
-			Deletions: a.Deletions,
-			Findings:  a.FindingsTotal,
-			Critical:  a.Critical,
-			High:      a.High,
-		})
-	}
-	return out, nil
 }
 
 // Config 读取调度配置；缺省/损坏时返回归一化默认（默认全关）。
@@ -200,11 +189,53 @@ func PayloadFor(kind string, now time.Time, manual bool) (payload any, idempoten
 	return p, "report:" + kind + ":" + start.Format("2006-01-02")
 }
 
-// authorLabel 榜单作者展示名：有备注显示「真名（账号）」，否则裸账号。
-func authorLabel(account, displayName string) string {
-	displayName = strings.TrimSpace(displayName)
-	if displayName != "" {
-		return fmt.Sprintf("%s（%s）", displayName, account)
+// authorNamer 把作者归属键（小写 email/login）解析为展示名，单次报告内缓存：
+// 有成员备注用备注真名；否则用 email 前缀（@ 之前部分），避免报告里一长串邮箱。
+type authorNamer struct {
+	st    *store.Store
+	cache map[string]string
+}
+
+func (n *authorNamer) name(ctx context.Context, key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return "未知"
 	}
-	return account
+	if n.cache != nil {
+		if v, ok := n.cache[key]; ok {
+			return v
+		}
+	}
+	out := key
+	if a, err := n.st.GetAuthorByLogin(ctx, key); err == nil {
+		if dn := strings.TrimSpace(a.DisplayName); dn != "" {
+			out = dn
+		}
+	} else if i := strings.Index(key, "@"); i > 0 {
+		out = key[:i]
+	}
+	if n.cache == nil {
+		n.cache = make(map[string]string)
+	}
+	n.cache[key] = out
+	return out
+}
+
+// shortLocation 把文件路径截短为最后两段 + 行号（a/b/c.go:12 → b/c.go:12），
+// 控制卡片长度；无路径分隔符时原样返回。
+func shortLocation(file string, line int) string {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return "-"
+	}
+	dir, base := path.Split(file)
+	if dir != "" {
+		if parent := path.Base(strings.TrimRight(dir, "/")); parent != "" && parent != "." {
+			base = parent + "/" + base
+		}
+	}
+	if line > 0 {
+		return fmt.Sprintf("%s:%d", base, line)
+	}
+	return base
 }

@@ -117,6 +117,28 @@ func commitSubject(statsJSON string) string {
 	return strings.TrimSpace(st.CommitSubject)
 }
 
+// ReviewFeature AI 看代码判断出的一个「完成功能/工作项」（存于 reviews.stats.features）。
+type ReviewFeature struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+	Author string `json:"author,omitempty"` // AI 标注的主要实现者 email，可空
+}
+
+// Features 从 stats JSON 中取 AI 判断的功能清单；老审查（无该字段）返回空，
+// 调用方按一条审查一个功能回退。
+func (r *Review) Features() []ReviewFeature {
+	if strings.TrimSpace(r.Stats) == "" {
+		return nil
+	}
+	var st struct {
+		Features []ReviewFeature `json:"features"`
+	}
+	if err := json.Unmarshal([]byte(r.Stats), &st); err != nil {
+		return nil
+	}
+	return st.Features
+}
+
 // ReviewAuthorReport 是一次审查中按作者（git blame 归属）拆分出的个人报告。
 // 一次 base..head 审查可能涉及多位作者，每位作者一条独立记录，拥有自己的
 // public_token、评分与问题计数，通知与公开报告均以作者为单位。
@@ -146,6 +168,8 @@ type ReviewAuthorReport struct {
 	Additions       int                    `json:"additions"`
 	Deletions       int                    `json:"deletions"`
 	FilesChanged    int                    `json:"files_changed"`
+	// FeatureCount 是 AI 看代码判断出的、归属该作者的功能/工作项数量（0 = 老数据，统计时按 1 回退）。
+	FeatureCount    int                    `json:"feature_count"`
 	TriggeredAt     time.Time              `json:"triggered_at"`
 	FinishedAt      *time.Time             `json:"finished_at,omitempty"`
 	// Stats 是所属 review 的 stats JSON 字符串（提交时间区间、窗口收窄、文件抽样等），

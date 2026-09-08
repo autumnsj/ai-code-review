@@ -79,6 +79,8 @@ type PiAgentReport struct {
 	Participants []CommitAuthor `json:"participants,omitempty"`
 	// AuthorStats 按 email 汇总每位作者在区间内的增删行与改动文件数。
 	AuthorStats map[string]AuthorDiffStat `json:"author_stats,omitempty"`
+	// Features 是 AI 看代码后判断的「本次实际完成的功能/工作项」，平台据此按人统计功能数。
+	Features []ReportFeature `json:"features,omitempty"`
 }
 
 // CommitAuthor git commit 元数据中的作者。
@@ -92,6 +94,14 @@ type AuthorDiffStat struct {
 	Additions    int `json:"additions"`
 	Deletions    int `json:"deletions"`
 	FilesChanged int `json:"files_changed"`
+}
+
+// ReportFeature AI 看代码判断出的一个「完成功能/工作项」。
+// Author 为 AI 标注的主要实现者 email（可空，空则归属被审 commit 的作者）。
+type ReportFeature struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+	Author string `json:"author,omitempty"`
 }
 
 type Dimension struct {
@@ -316,7 +326,11 @@ func (p *Pipeline) notifyFailure(ctx context.Context, reviewID int64) {
 
 func (p *Pipeline) persist(ctx context.Context, reviewID int64, specs []domain.DimensionSpec, r *PiAgentReport) error {
 	total := Score(r.Dimensions, specs, r.Findings)
-	statsJSON, _ := json.Marshal(r.Stats)
+	// stats JSON 内嵌 AI 判断的功能清单，供工作日报/功能数统计读取（reviews.stats 原样落库）。
+	statsJSON, _ := json.Marshal(struct {
+		ReportStats
+		Features []ReportFeature `json:"features,omitempty"`
+	}{ReportStats: r.Stats, Features: r.Features})
 
 	// 组装带展示名的维度评分（落库 score_dimensions，使报告自包含）。
 	labelByKey := make(map[string]string, len(specs))
@@ -449,6 +463,29 @@ func (p *Pipeline) persistAuthorReports(
 		byAuthor[f.Author] = append(byAuthor[f.Author], f)
 	}
 
+	// AI 判断的功能数按作者归集：AI 标注了 author 就归该作者（须是本次参与者），
+	// 未标注则归被审 commit 的作者；统计不到参与者的功能丢弃。
+	featureCount := make(map[string]int, len(participants))
+	fallbackAuthor := strings.ToLower(strings.TrimSpace(r.CommitAuthor.Email))
+	for _, f := range r.Features {
+		key := strings.ToLower(strings.TrimSpace(f.Author))
+		if key == "" {
+			key = fallbackAuthor
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := participants[key]; !ok {
+			// AI 标注的作者不在本次参与者区间内（可能误判），回退给 commit 作者。
+			key = fallbackAuthor
+		}
+		if key != "" {
+			if _, ok := participants[key]; ok {
+				featureCount[key]++
+			}
+		}
+	}
+
 	// 稳定顺序：按 email 排序，便于测试与通知顺序一致。
 	emails := make([]string, 0, len(participants))
 	for e := range participants {
@@ -521,6 +558,7 @@ func (p *Pipeline) persistAuthorReports(
 			Additions:       st.Additions,
 			Deletions:       st.Deletions,
 			FilesChanged:    st.FilesChanged,
+			FeatureCount:    featureCount[email],
 		}); err != nil {
 			return err
 		}

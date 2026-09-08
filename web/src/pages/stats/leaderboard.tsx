@@ -29,9 +29,10 @@ interface MetricDef {
 }
 
 // 功能产出：看每人完成了多少功能、带出多少问题。
+// 功能数来自 AI 看代码判断的功能/工作项（不数 PR、不数 commit）。
 const OUTPUT_METRICS: MetricDef[] = [
-  { key: 'review_count', label: '完成功能', hint: '成功交付的审查/PR 数',
-    value: (a) => a.review_count, format: (v) => v.toLocaleString(), color: '#722ed1' },
+  { key: 'feature_count', label: '完成功能', hint: 'AI 识别代码改动实际完成的功能/工作项数',
+    value: (a) => a.feature_count, format: (v) => v.toLocaleString(), color: '#722ed1' },
   { key: 'findings_total', label: '问题数量',
     value: (a) => a.findings_total, format: (v) => v.toLocaleString(), color: '#fa8c16' },
 ]

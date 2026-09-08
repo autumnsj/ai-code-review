@@ -90,6 +90,7 @@ type AuthorSummary struct {
 	DisplayName   string  `json:"display_name"`
 	Team          string  `json:"team"`
 	ReviewCount   int64   `json:"review_count"`
+	FeatureCount  int64   `json:"feature_count"` // AI 看代码判断的功能/工作项数
 	AvgTotal      float64 `json:"avg_total"`
 	AvgArch       float64 `json:"avg_arch"`
 	AvgQuality    float64 `json:"avg_quality"`

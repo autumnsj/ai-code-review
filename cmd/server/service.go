@@ -246,7 +246,7 @@ func (s *adminService) ListAuthors(ctx context.Context, days int, repoID int64, 
 // leaderboardMetrics 是排行榜页面展示的指标及其排序 key。
 // 代码量类取「最多」、评分类取「最高」，均为降序，语义自洽。
 var leaderboardMetrics = []string{
-	"churn", "additions", "deletions", "review_count", "findings_total",
+	"churn", "additions", "deletions", "feature_count", "review_count", "findings_total",
 	"avg_total", "avg_arch", "avg_quality", "avg_security", "avg_maint",
 }
 
@@ -316,6 +316,7 @@ func toAuthorSummary(a *store.AuthorStats) server.AuthorSummary {
 		DisplayName:   a.DisplayName,
 		Team:          a.Team,
 		ReviewCount:   a.ReviewCount,
+		FeatureCount:  a.FeatureCount,
 		AvgTotal:      roundFloat(a.AvgTotal, 1),
 		AvgArch:       roundFloat(a.AvgArch, 1),
 		AvgQuality:    roundFloat(a.AvgQuality, 1),

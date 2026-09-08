@@ -32,13 +32,14 @@ type UpsertAuthorReportParams struct {
 	Additions       int
 	Deletions       int
 	FilesChanged    int
+	FeatureCount    int // AI 判断归属该作者的功能/工作项数量
 }
 
 const authorReportColumns = `rar.id, rar.review_id, rar.author, rar.author_name, rar.public_token,
 	r.name AS repo_name, rv.commit_sha, rv.base_sha, rv.target_ref,
 	rar.summary, rar.score_total, rar.score_arch, rar.score_quality, rar.score_security, rar.score_maint,
 	rar.score_dimensions, rar.findings_count, rar.critical_count, rar.high_count, rar.medium_count,
-	rar.low_count, rar.info_count, rar.additions, rar.deletions, rar.files_changed,
+	rar.low_count, rar.info_count, rar.additions, rar.deletions, rar.files_changed, rar.feature_count,
 	rv.triggered_at, rar.created_at, rv.stats`
 
 // UpsertAuthorReport 按 (review_id, author) upsert 一条作者报告；存在则更新。
@@ -50,8 +51,8 @@ func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportPara
 				review_id, author, author_name, public_token, summary,
 				score_total, score_arch, score_quality, score_security, score_maint, score_dimensions,
 				findings_count, critical_count, high_count, medium_count, low_count, info_count,
-				additions, deletions, files_changed)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+				additions, deletions, files_changed, feature_count)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 			ON CONFLICT(review_id, author) DO UPDATE SET
 				author_name=EXCLUDED.author_name, public_token=EXCLUDED.public_token,
 				summary=EXCLUDED.summary, score_total=EXCLUDED.score_total,
@@ -61,11 +62,12 @@ func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportPara
 				findings_count=EXCLUDED.findings_count, critical_count=EXCLUDED.critical_count,
 				high_count=EXCLUDED.high_count, medium_count=EXCLUDED.medium_count,
 				low_count=EXCLUDED.low_count, info_count=EXCLUDED.info_count,
-				additions=EXCLUDED.additions, deletions=EXCLUDED.deletions, files_changed=EXCLUDED.files_changed`,
+				additions=EXCLUDED.additions, deletions=EXCLUDED.deletions, files_changed=EXCLUDED.files_changed,
+				feature_count=EXCLUDED.feature_count`,
 			p.ReviewID, p.Author, p.AuthorName, p.PublicToken, p.Summary,
 			p.ScoreTotal, p.ScoreArch, p.ScoreQuality, p.ScoreSecurity, p.ScoreMaint, p.ScoreDimensions,
 			p.FindingsCount, p.CriticalCount, p.HighCount, p.MediumCount, p.LowCount, p.InfoCount,
-			p.Additions, p.Deletions, p.FilesChanged)
+			p.Additions, p.Deletions, p.FilesChanged, p.FeatureCount)
 		return err
 	case DriverMySQL:
 		_, err := s.db.ExecContext(ctx, `
@@ -73,8 +75,8 @@ func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportPara
 				review_id, author, author_name, public_token, summary,
 				score_total, score_arch, score_quality, score_security, score_maint, score_dimensions,
 				findings_count, critical_count, high_count, medium_count, low_count, info_count,
-				additions, deletions, files_changed)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+				additions, deletions, files_changed, feature_count)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON DUPLICATE KEY UPDATE
 				author_name=VALUES(author_name), public_token=VALUES(public_token),
 				summary=VALUES(summary), score_total=VALUES(score_total),
@@ -84,11 +86,12 @@ func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportPara
 				findings_count=VALUES(findings_count), critical_count=VALUES(critical_count),
 				high_count=VALUES(high_count), medium_count=VALUES(medium_count),
 				low_count=VALUES(low_count), info_count=VALUES(info_count),
-				additions=VALUES(additions), deletions=VALUES(deletions), files_changed=VALUES(files_changed)`,
+				additions=VALUES(additions), deletions=VALUES(deletions), files_changed=VALUES(files_changed),
+				feature_count=VALUES(feature_count)`,
 			p.ReviewID, p.Author, p.AuthorName, p.PublicToken, p.Summary,
 			p.ScoreTotal, p.ScoreArch, p.ScoreQuality, p.ScoreSecurity, p.ScoreMaint, p.ScoreDimensions,
 			p.FindingsCount, p.CriticalCount, p.HighCount, p.MediumCount, p.LowCount, p.InfoCount,
-			p.Additions, p.Deletions, p.FilesChanged)
+			p.Additions, p.Deletions, p.FilesChanged, p.FeatureCount)
 		return err
 	default:
 		// SQLite 无 ON CONFLICT(review_id, author) 的命名约束，用 DELETE+INSERT 简化（单事务）。
@@ -106,12 +109,12 @@ func (s *Store) UpsertAuthorReport(ctx context.Context, p UpsertAuthorReportPara
 				review_id, author, author_name, public_token, summary,
 				score_total, score_arch, score_quality, score_security, score_maint, score_dimensions,
 				findings_count, critical_count, high_count, medium_count, low_count, info_count,
-				additions, deletions, files_changed)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				additions, deletions, files_changed, feature_count)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			p.ReviewID, p.Author, p.AuthorName, p.PublicToken, p.Summary,
 			p.ScoreTotal, p.ScoreArch, p.ScoreQuality, p.ScoreSecurity, p.ScoreMaint, p.ScoreDimensions,
 			p.FindingsCount, p.CriticalCount, p.HighCount, p.MediumCount, p.LowCount, p.InfoCount,
-			p.Additions, p.Deletions, p.FilesChanged); err != nil {
+			p.Additions, p.Deletions, p.FilesChanged, p.FeatureCount); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -180,7 +183,7 @@ func scanAuthorReport(scan func(...any) error) (*domain.ReviewAuthorReport, erro
 		&ar.RepoName, &ar.CommitSHA, &ar.BaseSHA, &ar.TargetRef,
 		&ar.Summary, &ar.ScoreTotal, &ar.ScoreArch, &ar.ScoreQuality, &ar.ScoreSecurity, &ar.ScoreMaint,
 		&dimJSON, &ar.FindingsCount, &ar.CriticalCount, &ar.HighCount, &ar.MediumCount,
-		&ar.LowCount, &ar.InfoCount, &ar.Additions, &ar.Deletions, &ar.FilesChanged,
+		&ar.LowCount, &ar.InfoCount, &ar.Additions, &ar.Deletions, &ar.FilesChanged, &ar.FeatureCount,
 		&ar.TriggeredAt, &finished, &stats,
 	)
 	if err != nil {

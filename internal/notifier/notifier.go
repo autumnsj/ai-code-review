@@ -203,6 +203,15 @@ type ReportReview struct {
 	Error  string
 }
 
+// ReportFeature 日报/周报「本期完成功能」清单中的一条。
+// 来自 AI 看代码判断的功能/工作项（pi-agent features）；老审查回退为一条审查标题。
+type ReportFeature struct {
+	Repo   string
+	Title  string
+	Detail string
+	Score  int
+}
+
 // ReportFinding 日报/周报「重点问题」清单中的一条（critical/high）。
 // Location 为已截短的「文件:行」；Author 为已格式化的责任人展示名（可空）。
 type ReportFinding struct {
@@ -224,18 +233,18 @@ func reportPeriod(kind string, start, end time.Time) (word, period string) {
 }
 
 // BuildPersonalReportMarkdown 生成某位成员的个人工作日报/周报（考核对人、一人一份）。
-// reviews/findings 均已归属到该成员：功能清单 + 其名下重点问题，不含他人内容。
-func BuildPersonalReportMarkdown(kind string, start, end time.Time, author string, reviews []ReportReview, findings []ReportFinding) string {
+// features/findings 均已归属到该成员：AI 判断的功能清单 + 其名下重点问题，不含他人内容。
+func BuildPersonalReportMarkdown(kind string, start, end time.Time, author string, features []ReportFeature, findings []ReportFinding) string {
 	word, period := reportPeriod(kind, start, end)
 	md := fmt.Sprintf("## 📝 %s 的工作%s（%s）\n", author, word, start.Format("2006-01-02"))
 	md += fmt.Sprintf("**统计周期**：%s（北京时间）\n", period)
 
-	n := len(reviews)
+	n := len(features)
 	avg := 0
 	if n > 0 {
 		sum := 0
-		for _, r := range reviews {
-			sum += r.Score
+		for _, f := range features {
+			sum += f.Score
 		}
 		avg = int(math.Round(float64(sum) / float64(n)))
 	}
@@ -251,13 +260,13 @@ func BuildPersonalReportMarkdown(kind string, start, end time.Time, author strin
 		n, scoreColor(avg), avg, crit, high)
 
 	md += "\n**🧑‍💻 本期完成功能**\n"
-	for _, r := range reviews {
-		subject := truncateRune(firstNonEmpty(r.Title, r.Ref), 42)
-		line := fmt.Sprintf("- ✅ [%s] %s", r.Repo, subject)
-		if desc := truncateRune(r.Desc, 70); desc != "" {
+	for _, f := range features {
+		subject := truncateRune(firstNonEmpty(f.Title, f.Repo), 42)
+		line := fmt.Sprintf("- ✅ [%s] %s", f.Repo, subject)
+		if desc := truncateRune(f.Detail, 70); desc != "" {
 			line += "：" + desc
 		}
-		line += fmt.Sprintf("（<font color=\"%s\">**%d**</font> 分）\n", scoreColor(r.Score), r.Score)
+		line += fmt.Sprintf("（<font color=\"%s\">**%d**</font> 分）\n", scoreColor(f.Score), f.Score)
 		md += line
 	}
 

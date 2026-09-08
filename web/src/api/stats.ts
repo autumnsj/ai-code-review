@@ -5,6 +5,8 @@ export interface AuthorSummary {
   display_name: string
   team: string
   review_count: number
+  /** AI 看代码判断的功能/工作项数（老数据按每条审查 1 个回退） */
+  feature_count: number
   avg_total: number
   avg_arch: number
   avg_quality: number

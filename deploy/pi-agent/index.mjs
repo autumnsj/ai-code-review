@@ -623,6 +623,12 @@ async function main() {
       "   功能未按 PR/commit 意图完整实现、接口契约或字段不一致等；不要只报代码风格与安全问题。",
       "7. summary 用中文：第一句必须是「本次改动实现了什么功能」的一句话概括（供自动生成工作日报使用，",
       "   例如「本次改动实现了订单数据导出功能，支持按时间范围筛选并异步下载」），随后再概述质量与主要问题。",
+      "8. features 必须列出本次代码改动实际完成的功能/工作项（平台据此统计每人完成的功能数，以代码为准，",
+      "   不看 PR 数也不看 commit 数）：一个相对独立、可交付的功能点或缺陷修复算一条，通常 1~5 条；",
+      "   必须根据你读到的代码改动判断，不要照抄 PR/commit 标题，也不要把同一个功能按文件/函数拆成多条；",
+      "   纯重构、配置调整、依赖升级等没有功能变化的改动不用列。每条给 title（一句话功能名，中文）、",
+      "   可选 detail（实现要点/范围一句话）、可选 author（主要负责人的 git 提交邮箱，可用 git log/blame 判断，",
+      "   多人协作时归给主要实现者，无法判断就留空）。",
     ].join("\n"),
     extensionFactories: [(pi) => {
       pi.registerTool({
@@ -655,6 +661,12 @@ async function main() {
           })),
           strengths: Type.Optional(Type.Array(Type.String())),
           risks: Type.Optional(Type.Array(Type.String())),
+          // features 是 AI 看代码后判断的「本次实际完成的功能/工作项」，平台据此统计每人功能数。
+          features: Type.Array(Type.Object({
+            title: Type.String({ description: "功能名：一句话说清这个功能/修复做了什么（中文，如「订单导出：支持按时间范围筛选并异步下载」）" }),
+            detail: Type.Optional(Type.String({ description: "实现要点/范围一句话补充，可空" })),
+            author: Type.Optional(Type.String({ description: "主要实现者的 git 提交邮箱（用 git log/blame 判断）；无法判断留空" })),
+          })),
           tokens_used: Type.Optional(Type.Integer()),
         }),
         async execute(_id, params) {
@@ -753,6 +765,7 @@ async function main() {
     `2. 按优先级挑出最多 ${budget.files} 个清单内文件，逐个 \`git diff ... -- <path>\`，必要时 read 上下文 / grep 调用点。`,
     `3. 工具调用接近 ${budget.toolCalls} 次、或感觉时间将尽时停止探索，调用 submit_report。`,
     ``,
+    `提交前别忘了 features：根据你实际看过的代码，列出本次改动完成的功能/工作项（一个独立可交付的功能或缺陷修复一条，通常 1~5 条），这是平台统计每人功能产出的依据。`,
     `请按 code-review 技能完成审查，并调用 submit_report 提交报告。`,
   ].filter(Boolean).join("\n");
 
@@ -970,6 +983,8 @@ async function main() {
     findings,
     strengths: submitted.strengths ?? [],
     risks: submitted.risks ?? [],
+    // AI 看代码判断的功能/工作项清单（平台按人统计功能数、生成工作日报）。
+    features: Array.isArray(submitted.features) ? submitted.features : [],
     stats: {
       files_changed: diff.filesChanged,
       additions: diff.additions,

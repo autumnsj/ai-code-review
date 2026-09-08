@@ -53,6 +53,8 @@ type AuthorStats struct {
 	DisplayName   string    `json:"display_name"`
 	Team          string    `json:"team"`
 	ReviewCount   int64     `json:"review_count"`
+	// FeatureCount 是 AI 看代码判断出的功能/工作项总数（老数据 feature_count=0 按每条 1 回退）。
+	FeatureCount  int64     `json:"feature_count"`
 	AvgTotal      float64   `json:"avg_total"`
 	AvgArch       float64   `json:"avg_arch"`
 	AvgQuality    float64   `json:"avg_quality"`
@@ -79,7 +81,7 @@ type AuthorFilter struct {
 	RepoID      int64  // 0 表示全部
 	Author      string // 模糊匹配；AuthorExact 非空时精确匹配
 	AuthorExact string
-	Sort        string // avg_score|additions|deletions|churn|review_count|findings
+	Sort        string // avg_score|additions|deletions|churn|review_count|feature_count|findings
 	Limit       int
 	Offset      int
 }
@@ -95,6 +97,8 @@ var authorSortColumns = map[string]string{
 	"deletions":    "deletions",
 	"churn":        "churn",
 	"review_count": "review_count",
+	"feature_count": "feature_count",
+	"features":     "feature_count",
 	"findings":     "findings_total",
 }
 
@@ -107,6 +111,8 @@ const authorSelect = `
 		COALESCE(MAX(a.display_name),'')                  AS display_name,
 		COALESCE(MAX(a.team),'')                          AS team,
 		COUNT(*)                                          AS review_count,
+		-- 功能数取 AI 判断的 feature_count；老数据（0）按「一条作者报告 = 1 个功能」回退。
+		COALESCE(SUM(CASE WHEN rar.feature_count > 0 THEN rar.feature_count ELSE 1 END),0) AS feature_count,
 		COALESCE(AVG(rar.score_total),0)                 AS avg_total,
 		COALESCE(AVG(rar.score_arch),0)                  AS avg_arch,
 		COALESCE(AVG(rar.score_quality),0)               AS avg_quality,
@@ -195,7 +201,7 @@ func scanAuthorStats(scan func(...any) error) (*AuthorStats, error) {
 	var a AuthorStats
 	var last flexibleTime
 	err := scan(
-		&a.Author, &a.DisplayName, &a.Team, &a.ReviewCount,
+		&a.Author, &a.DisplayName, &a.Team, &a.ReviewCount, &a.FeatureCount,
 		&a.AvgTotal, &a.AvgArch, &a.AvgQuality, &a.AvgSecurity, &a.AvgMaint,
 		&a.Additions, &a.Deletions, &a.Churn, &a.FilesChanged, &a.TokensUsed,
 		&a.FindingsTotal, &a.Critical, &a.High, &a.Medium, &a.Low, &a.Info,

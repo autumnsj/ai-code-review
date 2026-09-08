@@ -56,7 +56,7 @@ func NewService(st *store.Store, d *notifier.Dispatcher, log *zap.Logger) *Servi
 // personReport 一位成员在本周期内的考核数据（一人一份报告）。
 type personReport struct {
 	name     string
-	reviews  []notifier.ReportReview
+	features []notifier.ReportFeature // AI 看代码判断的功能/工作项（老审查回退一条审查标题）
 	findings []notifier.ReportFinding
 }
 
@@ -116,7 +116,7 @@ func (s *Service) HandleJob(ctx context.Context, job *domain.Job) error {
 	}
 
 	for _, person := range data.persons {
-		md := notifier.BuildPersonalReportMarkdown(p.Kind, start, end, person.name, person.reviews, person.findings)
+		md := notifier.BuildPersonalReportMarkdown(p.Kind, start, end, person.name, person.features, person.findings)
 		persistAndSend(person.name, person.name+" · 工作"+word+suffix, md)
 	}
 	if notice := notifier.BuildTeamNoticeMarkdown(p.Kind, start, end, data.failed, data.orphans, true); notice != "" {
@@ -145,7 +145,7 @@ func (s *Service) Build(ctx context.Context, kind string, now time.Time) (title,
 		parts = append(parts, notifier.BuildTeamNoticeMarkdown(kind, st, en, nil, nil, false))
 	} else {
 		for _, person := range data.persons {
-			parts = append(parts, notifier.BuildPersonalReportMarkdown(kind, st, en, person.name, person.reviews, person.findings))
+			parts = append(parts, notifier.BuildPersonalReportMarkdown(kind, st, en, person.name, person.features, person.findings))
 		}
 		if notice := notifier.BuildTeamNoticeMarkdown(kind, st, en, data.failed, data.orphans, true); notice != "" {
 			parts = append(parts, notice)
@@ -170,19 +170,23 @@ func (s *Service) aggregate(ctx context.Context, p JobPayload) (*reportData, err
 
 	data := &reportData{hasAny: len(rvs) > 0}
 	personIdx := map[string]int{} // 作者 key（小写 email）→ persons 下标
+	// 可归属的成功审查（key → review），稍后按 AI 功能清单分发到人。
+	type successReview struct {
+		key string
+		rv  *domain.Review
+	}
+	var succeeded []successReview
 	for _, r := range rvs {
-		rv := notifier.ReportReview{
-			Repo:   r.RepoName,
-			Title:  r.FeatureTitle(),
-			Desc:   firstSentence(r.Summary),
-			Ref:    r.TargetRef,
-			Commit: r.CommitSHA,
-			Score:  r.ScoreTotal,
-			Status: r.Status,
-			Error:  r.Error,
-		}
 		if r.Status != "succeeded" {
-			data.failed = append(data.failed, rv)
+			data.failed = append(data.failed, notifier.ReportReview{
+				Repo:   r.RepoName,
+				Title:  r.FeatureTitle(),
+				Ref:    r.TargetRef,
+				Commit: r.CommitSHA,
+				Score:  r.ScoreTotal,
+				Status: r.Status,
+				Error:  r.Error,
+			})
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(r.Author))
@@ -190,13 +194,34 @@ func (s *Service) aggregate(ctx context.Context, p JobPayload) (*reportData, err
 		if key == "" || strings.EqualFold(key, "admin") {
 			continue
 		}
-		idx, ok := personIdx[key]
-		if !ok {
-			idx = len(data.persons)
-			personIdx[key] = idx
+		if _, ok := personIdx[key]; !ok {
+			personIdx[key] = len(data.persons)
 			data.persons = append(data.persons, personReport{name: names.name(ctx, key)})
 		}
-		data.persons[idx].reviews = append(data.persons[idx].reviews, rv)
+		succeeded = append(succeeded, successReview{key: key, rv: r})
+	}
+	// 功能数以代码为准：用 AI 看代码判断的 features 清单，按 AI 标注的 author 归属到人；
+	// AI 未标注或标注的人不在本周期人员中时，归给该审查的提交作者。
+	// 老审查（stats 里无 features）回退为一条「审查 = 一个功能」，标题取 PR 标题/commit 标题。
+	for _, sr := range succeeded {
+		r := sr.rv
+		feats := r.Features()
+		if len(feats) == 0 {
+			feats = []domain.ReviewFeature{{Title: r.FeatureTitle(), Detail: firstSentence(r.Summary)}}
+		}
+		for _, f := range feats {
+			key := strings.ToLower(strings.TrimSpace(f.Author))
+			if _, ok := personIdx[key]; !ok {
+				key = sr.key
+			}
+			idx := personIdx[key]
+			data.persons[idx].features = append(data.persons[idx].features, notifier.ReportFeature{
+				Repo:   r.RepoName,
+				Title:  f.Title,
+				Detail: f.Detail,
+				Score:  r.ScoreTotal,
+			})
+		}
 	}
 	for _, f := range fs {
 		ff := notifier.ReportFinding{

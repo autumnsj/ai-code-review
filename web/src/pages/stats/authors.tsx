@@ -19,7 +19,7 @@ const DAYS_OPTIONS = [
 ]
 
 const SORT_OPTIONS = [
-  { value: 'review_count', label: '完成功能数' },
+  { value: 'feature_count', label: '完成功能数' },
   { value: 'avg_score', label: '平均评分' },
   { value: 'additions', label: '新增行数' },
   { value: 'deletions', label: '删除行数' },
@@ -51,13 +51,13 @@ export default function AuthorsStatsPage() {
   const items = data?.items ?? []
   const totals = items.reduce(
     (acc, a) => {
-      acc.reviews += a.review_count
+      acc.features += a.feature_count
       acc.add += a.additions
       acc.del += a.deletions
       acc.findings += a.findings_total
       return acc
     },
-    { reviews: 0, add: 0, del: 0, findings: 0 },
+    { features: 0, add: 0, del: 0, findings: 0 },
   )
 
   return (
@@ -66,7 +66,7 @@ export default function AuthorsStatsPage() {
 
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}><Card><Statistic title="作者数" value={items.length} loading={isLoading} /></Card></Col>
-        <Col span={6}><Card><Statistic title="完成功能总数" value={totals.reviews} loading={isLoading} /></Card></Col>
+        <Col span={6}><Card><Statistic title="完成功能总数（AI 识别）" value={totals.features} loading={isLoading} /></Card></Col>
         <Col span={6}><Card><Statistic title="代码变动（+/-）" value={`+${totals.add} / -${totals.del}`} loading={isLoading} /></Card></Col>
         <Col span={6}><Card><Statistic title="问题总数" value={totals.findings} valueStyle={{ color: totals.findings > 0 ? '#cf1322' : undefined }} loading={isLoading} /></Card></Col>
       </Row>
@@ -102,7 +102,7 @@ export default function AuthorsStatsPage() {
                 </span>
               ),
             },
-            { title: '完成功能', dataIndex: 'review_count', width: 100, sorter: (a, b) => a.review_count - b.review_count },
+            { title: '完成功能', dataIndex: 'feature_count', width: 100, sorter: (a, b) => a.feature_count - b.feature_count },
             {
               title: '平均分', dataIndex: 'avg_total', width: 110, sorter: (a, b) => a.avg_total - b.avg_total,
               render: (v: number) => <span style={{ color: scoreColor(v), fontWeight: 600 }}>{v.toFixed(1)}</span>,
@@ -143,7 +143,7 @@ export default function AuthorsStatsPage() {
         {detail && (
           <>
             <Descriptions column={2} bordered size="small" title="汇总">
-              <Descriptions.Item label="完成功能数">{detail.summary.review_count}</Descriptions.Item>
+              <Descriptions.Item label="完成功能数（AI 识别）">{detail.summary.feature_count}</Descriptions.Item>
               <Descriptions.Item label="平均分">
                 <span style={{ color: scoreColor(detail.summary.avg_total), fontWeight: 600 }}>{detail.summary.avg_total.toFixed(1)}</span>
               </Descriptions.Item>

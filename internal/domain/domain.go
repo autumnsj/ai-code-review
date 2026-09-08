@@ -360,6 +360,20 @@ func (c ReportScheduleConfig) Normalize() ReportScheduleConfig {
 	return c
 }
 
+// Report 一条已发送的日报/周报（reports 表）。报告发送时落库，平台可回看；
+// 预览不产生记录。JobID 关联 jobs 表，唯一约束保证 job 重试不重复落库。
+type Report struct {
+	ID          int64     `json:"id"`
+	Kind        string    `json:"kind"`         // daily | weekly
+	TriggerType string    `json:"trigger_type"` // scheduled | manual
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"`
+	Title       string    `json:"title"`
+	Content     string    `json:"content,omitempty"` // 列表查询不填充
+	JobID       int64     `json:"job_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // isValidHHMM 校验 "HH:MM"（24 小时制）。
 func isValidHHMM(v string) bool {
 	if len(v) != 5 || v[2] != ':' {

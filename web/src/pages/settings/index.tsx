@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, NotifierChannelInput, NotifierType, LLMProfileInput, ModelItem, DimensionSpec, ReviewLimits, ReportKind, ReportScheduleConfig } from '../../api/settings'
 import { ReloadOutlined } from '@ant-design/icons'
+import { Link } from 'react-router-dom'
 import dayjs from 'dayjs'
 
 export default function SettingsPage() {
@@ -409,6 +410,7 @@ function ScheduledReportsPane() {
         到点自动生成团队工作日报/周报并推送到「通知」页中<b>所有启用的渠道</b>，代替人工写日报：
         按成员汇总本期完成的功能工作（取自审查的 PR/提交标题与 AI 功能概述），并附重点问题提醒。
         日报汇总前一天全天，周报汇总前 7 天；时间均为北京时间，周期内没有审查记录也会发送简报。默认关闭。
+        已发送的报告可在 <Link to="/admin/reports">报告记录</Link> 回看。
       </Typography.Paragraph>
       <Form form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
         <Card

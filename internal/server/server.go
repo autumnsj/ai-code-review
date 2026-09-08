@@ -195,6 +195,9 @@ func (s *Server) Router() *gin.Engine {
 		authed.POST("/report-schedules/preview", s.previewReport)
 		authed.POST("/report-schedules/run", s.runReport)
 
+		authed.GET("/reports", s.listReportRecords)
+		authed.GET("/reports/:id", s.getReportRecord)
+
 		authed.GET("/repos", s.listRepos)
 		authed.POST("/repos", s.createRepo)
 		authed.GET("/repos/:id", s.getRepo)

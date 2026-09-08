@@ -64,6 +64,23 @@ func (s *Service) HandleJob(ctx context.Context, job *domain.Job) error {
 	if err != nil {
 		return err
 	}
+	// 先落库后推送：落库失败则返回错误让 job 重试（此时尚未推送，重试安全）；
+	// job_id 唯一约束兜底，同一 job 重试不会产生重复报告。
+	trigger := "scheduled"
+	if p.Manual {
+		trigger = "manual"
+	}
+	if err := s.st.CreateReport(ctx, store.CreateReportInput{
+		Kind:        p.Kind,
+		TriggerType: trigger,
+		PeriodStart: p.PeriodStart,
+		PeriodEnd:   p.PeriodEnd,
+		Title:       title,
+		Content:     md,
+		JobID:       job.ID,
+	}); err != nil {
+		return fmt.Errorf("persist report: %w", err)
+	}
 	s.dispatcher.SendMarkdown(ctx, title, md)
 	s.log.Info("report sent", zap.String("kind", p.Kind),
 		zap.Time("period_start", p.PeriodStart), zap.Time("period_end", p.PeriodEnd),

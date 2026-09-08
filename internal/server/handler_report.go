@@ -1,11 +1,14 @@
 package server
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ai-code-review/aicr/internal/domain"
+	"github.com/ai-code-review/aicr/internal/store"
 )
 
 // GET /api/admin/settings/report-schedules
@@ -69,4 +72,37 @@ func (s *Server) runReport(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// GET /api/admin/reports?page=&page_size=  报告记录列表（不含正文）。
+func (s *Server) listReportRecords(c *gin.Context) {
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	items, total, err := s.store.ListReports(c.Request.Context(), pageSize, (page-1)*pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
+}
+
+// GET /api/admin/reports/:id  报告详情（含 markdown 正文）。
+func (s *Server) getReportRecord(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	rpt, err := s.store.GetReport(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "报告不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rpt)
 }

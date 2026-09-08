@@ -9,6 +9,7 @@ import RepoDetailPage from './pages/repos/detail'
 import CredentialsPage from './pages/credentials'
 import ReviewsPage from './pages/reviews'
 import ReviewDetailPage from './pages/reviews/detail'
+import ReportsPage from './pages/reports'
 import JobsPage from './pages/jobs'
 import AuthorsStatsPage from './pages/stats/authors'
 import LeaderboardPage from './pages/stats/leaderboard'
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: 'credentials', element: <CredentialsPage /> },
       { path: 'reviews', element: <ReviewsPage /> },
       { path: 'reviews/:id', element: <ReviewDetailPage /> },
+      { path: 'reports', element: <ReportsPage /> },
       { path: 'stats/authors', element: <AuthorsStatsPage /> },
       { path: 'stats/leaderboard', element: <LeaderboardPage /> },
       { path: 'members', element: <MembersPage /> },

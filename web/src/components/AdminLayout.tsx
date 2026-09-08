@@ -6,6 +6,7 @@ import {
   BranchesOutlined,
   KeyOutlined,
   AuditOutlined,
+  FileTextOutlined,
   TeamOutlined,
   UnorderedListOutlined,
   SettingOutlined,
@@ -20,6 +21,7 @@ const items = [
   { key: '/admin/repos', icon: <BranchesOutlined />, label: <Link to="/admin/repos">仓库</Link> },
   { key: '/admin/credentials', icon: <KeyOutlined />, label: <Link to="/admin/credentials">凭据</Link> },
   { key: '/admin/reviews', icon: <AuditOutlined />, label: <Link to="/admin/reviews">审查记录</Link> },
+  { key: '/admin/reports', icon: <FileTextOutlined />, label: <Link to="/admin/reports">报告记录</Link> },
   {
     key: '/admin/stats', icon: <BarChartOutlined />, label: '统计',
     children: [
